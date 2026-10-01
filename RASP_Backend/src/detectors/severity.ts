@@ -77,6 +77,10 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   sim_change: "high",
   third_party_keyboard: "medium",
   task_hijack: "high",
+
+  // Task 3c — attested device state, known malware
+  device_state_attestation: "high",
+  malware_reputation: "critical",
 };
 
 export function severityOf(detectorId: string): DetectorSeverity {

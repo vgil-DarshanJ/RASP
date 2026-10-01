@@ -13,6 +13,8 @@ const NEW_DETECTORS: Record<string, string> = {
   sim_change: "high",
   third_party_keyboard: "medium",
   task_hijack: "high",
+  device_state_attestation: "high",
+  malware_reputation: "critical",
 };
 
 test("new detector ids have an explicit severity (not the 'low' fallback)", () => {
