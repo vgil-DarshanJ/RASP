@@ -1,0 +1,44 @@
+version: "3.9"
+
+# Local development only. Named volumes persist data across
+# `docker compose down`/`up`; use `docker compose down -v` to wipe them.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rasp_shield_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rasp
+      POSTGRES_PASSWORD: rasp_dev_password
+      POSTGRES_DB: rasp_shield
+    ports:
+      # Host 5433 -> container 5432: this dev box already has a native
+      # Postgres 18 install bound to host 5432 (unrelated project), so the
+      # container is published on 5433 instead to avoid the conflict.
+      - "5433:5432"
+    volumes:
+      - rasp_shield_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rasp -d rasp_shield"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: rasp_shield_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - rasp_shield_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  rasp_shield_postgres_data:
+  rasp_shield_redis_data:

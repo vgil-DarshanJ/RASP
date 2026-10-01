@@ -1,0 +1,234 @@
+// RASP Shield Platform — data model.
+// Postgres is the single source of truth. Redis (wired separately via
+// ioredis, not Prisma) is a cache/counter layer only — never authoritative.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Platform {
+  ANDROID_NATIVE
+  FLUTTER
+  IOS
+  REACT_NATIVE
+}
+
+enum CredentialStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// A customer's organization/bank — the top-level tenant boundary. Every
+/// alert eventually traces back to exactly one of these, which is what
+/// decides who gets notified in a future alert-routing phase.
+model Organization {
+  id           String        @id @default(cuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  users        User[]
+  applications Application[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  role         Role         @default(OWNER)
+  organization Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  createdAt    DateTime     @default(now())
+
+  @@map("users")
+}
+
+/// One integration — "our Android app," "our Flutter app" — registered
+/// under an organization. A JSON credential is issued per Application, not
+/// per Organization, so revoking one app's access never affects another.
+model Application {
+  id             String        @id @default(cuid())
+  name           String
+  platform       Platform
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String
+  createdAt      DateTime      @default(now())
+  credentials    ApiCredential[]
+  events         SecurityEvent[]
+  webhooks       WebhookConfig[]
+  devices        DeviceRegistration[]
+  /// Soft-delete/archive marker — set by `DELETE /v1/apps/:id`. Every
+  /// query that scopes to one application (dashboard, devices, threats,
+  /// credentials, webhooks — anywhere `assertOwnedApplication` runs)
+  /// additionally requires `archivedAt: null`, so an archived app's
+  /// `SecurityEvent` rows become unreachable through the normal API
+  /// surface without a single one of them being touched or deleted —
+  /// "hide everything, keep everything," the same rule `ApiCredential
+  /// .deletedAt` already established for credentials.
+  archivedAt     DateTime?
+
+  @@index([organizationId])
+  @@map("applications")
+}
+
+/// The credential handed out as the downloadable JSON file.
+///
+/// `apiSecretEncrypted` stores the secret under AES-256-GCM (see
+/// `src/crypto/secretBox.ts`) — deliberately NOT a one-way hash. The
+/// ingestion endpoint verifies an HMAC-SHA256 signature computed with
+/// this secret on every request (see `middleware/apiKey.ts`), which
+/// requires the server to recover the raw secret at verify time; a
+/// bcrypt/argon2 hash can only ever answer "does this match," never
+/// reproduce the value needed to *compute* a signature. The plaintext
+/// secret itself is still shown to the customer exactly once, at
+/// creation, and this backend never logs or displays it again after
+/// that — only its encrypted-at-rest form is ever persisted.
+model ApiCredential {
+  id                 String            @id @default(cuid())
+  application        Application       @relation(fields: [applicationId], references: [id])
+  applicationId      String
+  apiKey             String            @unique
+  apiSecretEncrypted String
+  status             CredentialStatus  @default(ACTIVE)
+  createdAt          DateTime          @default(now())
+  rotatedAt          DateTime?
+  revokedAt          DateTime?
+  /// Soft-delete marker — set by `DELETE /v1/credentials/.../:id`, only
+  /// ever on an already-REVOKED credential. The row (and every
+  /// `CredentialAuditLog` entry pointing at it) is kept forever; this
+  /// only hides it from `GET /v1/credentials`' default listing. A true
+  /// hard delete was deliberately rejected here: it would either cascade
+  /// away this credential's own audit history or fail on the
+  /// `CredentialAuditLog` foreign key, both of which contradict the
+  /// "the audit trail is immutable" rule the rest of this schema follows.
+  deletedAt          DateTime?
+  auditLogs          CredentialAuditLog[]
+
+  @@index([applicationId])
+  @@map("api_credentials")
+}
+
+enum CredentialAuditAction {
+  ISSUED
+  REVOKED
+  REACTIVATED
+  DELETED
+}
+
+/// Who issued/revoked which credential, when, from where — the audit
+/// trail for the credential lifecycle itself (distinct from
+/// `SecurityEvent`, which audits what the SDK observed on a device).
+/// Immutable by convention: rows are only ever inserted, never updated
+/// or deleted, by this codebase.
+model CredentialAuditLog {
+  id                String                @id @default(cuid())
+  credential        ApiCredential         @relation(fields: [credentialId], references: [id])
+  credentialId      String
+  action            CredentialAuditAction
+  performedByUserId String
+  performedAt       DateTime              @default(now())
+  ipAddress         String?
+
+  @@index([credentialId])
+  @@map("credential_audit_logs")
+}
+
+/// One audit-trail row — a single detector result the SDK shipped in.
+/// `receivedAt` (server clock, set by the ingestion handler) is the
+/// authoritative timestamp; `clientObservedAt` is advisory only — a
+/// compromised device can lie about its own clock, same principle already
+/// documented throughout the SDK's own guides.
+model SecurityEvent {
+  id               String       @id @default(cuid())
+  application      Application  @relation(fields: [applicationId], references: [id])
+  applicationId    String
+
+  detectorId       String
+  status           String       // SECURE | DETECTED | UNAVAILABLE | UNKNOWN | ERROR
+  evidence         Json?
+  reason           String?
+
+  // Device/app identity — the "who and what" of the audit trail.
+  deviceId         String?
+  deviceModel      String?
+  manufacturer     String?
+  osPlatform       String?      // android | ios
+  osVersion        String?
+  appVersion       String?
+  sdkVersion       String?
+
+  clientObservedAt DateTime?
+  receivedAt       DateTime     @default(now())
+  ipAddress        String?
+
+  @@index([applicationId, receivedAt])
+  @@index([applicationId, detectorId])
+  @@index([applicationId, status])
+  @@map("security_events")
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// A registered device with its ECDSA P-256 public key for evidence
+/// envelope verification. The attestation certificate chain is stored
+/// for backend verification of the key's hardware-backed origin.
+model DeviceRegistration {
+  id              String   @id @default(cuid())
+  application     Application @relation(fields: [applicationId], references: [id])
+  applicationId   String
+  deviceId        String   // The SDK's device_id (ANDROID_ID or install-scoped UUID)
+  deviceKeyId     String   @unique // SHA-256 of SPKI (Base64), used as lookup key for envelopes
+  publicKey       String   // Base64-encoded X.509 SPKI (EC P-256)
+  attestationChain String[] // Base64-encoded DER certificates, leaf first
+  sdkVersion      String
+  createdAt       DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  lastCounter     BigInt   @default(0) // Last accepted monotonic counter
+  lastNonce       String?  // Last accepted nonce (for replay protection)
+
+  @@unique([applicationId, deviceId])
+  @@index([applicationId])
+  @@map("device_registrations")
+}
+
+/// Outbound alert policy for one application — "call this URL when a
+/// DETECTED event meets or exceeds this severity." Mirrors the
+/// threat-response-action pattern Zimperium/Appdome both expose (block /
+/// alert / log). This platform only ever alerts (no in-app blocking
+/// decision is made server-side — that stays the SDK/host app's own
+/// call, matching the existing "SDK reports, app decides" boundary).
+/// One row per application; multiple configs would mean multiple
+/// destinations, which isn't a real requirement yet — kept to one row so
+/// there's nothing to reconcile if it were ever added.
+model WebhookConfig {
+  id             String         @id @default(cuid())
+  application    Application    @relation(fields: [applicationId], references: [id])
+  applicationId  String         @unique
+  url            String
+  secretEncrypted String
+  minSeverity    AlertSeverity  @default(HIGH)
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  lastTriggeredAt DateTime?
+  lastStatusCode  Int?
+  lastError       String?
+
+  @@map("webhook_configs")
+}
