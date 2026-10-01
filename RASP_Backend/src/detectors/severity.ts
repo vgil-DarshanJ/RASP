@@ -71,6 +71,12 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   time_spoofing: "medium",
   unsafe_wifi: "medium",
   screen_recording: "high",
+
+  // Task 3b — fraud-pattern signals
+  vishing_call: "high",
+  sim_change: "high",
+  third_party_keyboard: "medium",
+  task_hijack: "high",
 };
 
 export function severityOf(detectorId: string): DetectorSeverity {

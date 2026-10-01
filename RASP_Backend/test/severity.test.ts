@@ -9,6 +9,10 @@ const NEW_DETECTORS: Record<string, string> = {
   time_spoofing: "medium",
   unsafe_wifi: "medium",
   screen_recording: "high",
+  vishing_call: "high",
+  sim_change: "high",
+  third_party_keyboard: "medium",
+  task_hijack: "high",
 };
 
 test("new detector ids have an explicit severity (not the 'low' fallback)", () => {
