@@ -65,6 +65,12 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   overlay: "medium",
   accessibility: "medium",
   external_display: "medium",
+
+  // Task 3a — location, time, network, screen
+  mock_location: "high",
+  time_spoofing: "medium",
+  unsafe_wifi: "medium",
+  screen_recording: "high",
 };
 
 export function severityOf(detectorId: string): DetectorSeverity {
