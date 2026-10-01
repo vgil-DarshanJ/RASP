@@ -237,6 +237,34 @@ export const DETECTOR_GUIDE: DetectorGuideEntry[] = [
     consequenceIfDisabled:
       "A screen recording of balances, card details or OTP screens happens with no record. Android 15+ only; needs the DETECT_SCREEN_RECORDING permission in the app manifest.",
   },
+  {
+    detectorId: "vishing_call",
+    dartField: "vishingCallDetection",
+    kotlinField: "vishingCallDetection",
+    consequenceIfDisabled:
+      "A customer being talked through a transfer by a fraudster on the phone looks like any other session. Needs READ_PHONE_STATE (runtime permission); use isCallActive() on payment screens to warn or pause.",
+  },
+  {
+    detectorId: "sim_change",
+    dartField: "simChangeDetection",
+    kotlinField: "simChangeDetection",
+    consequenceIfDisabled:
+      "A SIM swap — the usual way OTPs are stolen — is invisible to the app. Needs READ_PHONE_STATE; call acknowledgeSimChange() after re-verifying the customer.",
+  },
+  {
+    detectorId: "third_party_keyboard",
+    dartField: "thirdPartyKeyboardDetection",
+    kotlinField: "thirdPartyKeyboardDetection",
+    consequenceIfDisabled:
+      "A keylogging keyboard can capture passwords, PINs and OTPs typed into the app with nothing flagging it. Add vendor keyboards you trust to trustedKeyboardPackages.",
+  },
+  {
+    detectorId: "task_hijack",
+    dartField: "taskHijackDetection",
+    kotlinField: "taskHijackDetection",
+    consequenceIfDisabled:
+      "A malicious app that places its screens in your app's task (a fake login page shown when the customer opens your app) goes unnoticed. Scans apps with a launcher icon on Android 11+.",
+  },
 ];
 
 export function guideEntryFor(detectorId: string): DetectorGuideEntry | undefined {

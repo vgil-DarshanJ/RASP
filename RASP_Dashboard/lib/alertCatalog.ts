@@ -237,6 +237,36 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
     severity: "high",
     description: "This app's screens are visible in an active screen recording. Android 15 (API 35) and above only.",
   },
+
+  // ── Task 3b ────────────────────────────────────────────────────────────
+  vishing_call: {
+    title: "Call During App Use",
+    category: "Privacy & Screen",
+    severity: "high",
+    description:
+      "A phone call was ringing or in progress while the app was in the foreground — the usual pattern of voice-phishing (vishing) fraud. Telephony calls only; VoIP calls are not seen.",
+  },
+  sim_change: {
+    title: "SIM Change",
+    category: "Device Integrity",
+    severity: "high",
+    description:
+      "The set of SIM cards differs from the one recorded earlier (possible SIM swap). Stays reported until the app acknowledges it after re-verifying the customer. No phone number or IMEI is collected.",
+  },
+  third_party_keyboard: {
+    title: "Third-party Keyboard",
+    category: "Privacy & Screen",
+    severity: "medium",
+    description:
+      "The active keyboard is neither a system keyboard nor an allowlisted one installed from Google Play. A keyboard sees every key typed.",
+  },
+  task_hijack: {
+    title: "Task Hijacking",
+    category: "App Integrity",
+    severity: "high",
+    description:
+      "Another installed app declares this app's task affinity, so its screens can appear inside this app's task (fake login screens).",
+  },
 };
 
 export const CATEGORY_COLORS: Record<AlertCategory, { bg: string; text: string; dot: string }> = {
