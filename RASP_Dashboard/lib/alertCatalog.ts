@@ -209,6 +209,34 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
     severity: "medium",
     description: "A connected external, wireless, or presentation display — a possible screen-mirroring surface.",
   },
+
+  // ── Task 3a ────────────────────────────────────────────────────────────
+  mock_location: {
+    title: "Mock Location",
+    category: "Device Integrity",
+    severity: "high",
+    description:
+      "The location the app supplied is marked by Android as a mock (fake GPS) fix. Evaluated only when the app passes a location.",
+  },
+  time_spoofing: {
+    title: "Time Spoofing",
+    category: "Device Integrity",
+    severity: "medium",
+    description:
+      "At least two of: wall clock jumped against the monotonic clock, clock far from server time, automatic time turned off.",
+  },
+  unsafe_wifi: {
+    title: "Unsafe Wi-Fi",
+    category: "Network Security",
+    severity: "medium",
+    description: "Connected to an open (unencrypted) or WEP Wi-Fi network, or one behind a captive portal.",
+  },
+  screen_recording: {
+    title: "Screen Recording",
+    category: "Privacy & Screen",
+    severity: "high",
+    description: "This app's screens are visible in an active screen recording. Android 15 (API 35) and above only.",
+  },
 };
 
 export const CATEGORY_COLORS: Record<AlertCategory, { bg: string; text: string; dot: string }> = {

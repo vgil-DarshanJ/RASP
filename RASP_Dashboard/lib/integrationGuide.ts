@@ -1,6 +1,6 @@
 /**
  * Data behind the "Integration Guide" page (`app/(app)/guide`) — for each
- * of the 26 detectors, the exact `RaspLeanConfig` field name on each
+ * of the detectors, the exact `RaspLeanConfig` field name on each
  * implemented platform, and what actually happens if a bank chooses not
  * to turn it on. Kept in sync by hand with the SDKs, the same way
  * `alertCatalog.ts`'s own header documents doing (source of truth:
@@ -208,6 +208,34 @@ export const DETECTOR_GUIDE: DetectorGuideEntry[] = [
     kotlinField: "externalDisplayDetection",
     consequenceIfDisabled:
       "Screen mirroring to an external/wireless display during a session — e.g. to record a card number or a QR code — happens with nothing on the device side flagging it.",
+  },
+  {
+    detectorId: "mock_location",
+    dartField: "mockLocationDetection",
+    kotlinField: "mockLocationDetection",
+    consequenceIfDisabled:
+      "A faked GPS position (to pass a geo-fence or look like the customer's home city) is accepted as real. Requires the app to supply its location, including the fix's mock flag (geolocator Position.isMocked / RaspLocationSnapshot.fromLocation).",
+  },
+  {
+    detectorId: "time_spoofing",
+    dartField: "timeSpoofingDetection",
+    kotlinField: "timeSpoofingDetection",
+    consequenceIfDisabled:
+      "A device clock moved backwards or forwards (to replay a time-limited code, or to fake when something happened) goes unnoticed. Supply a trusted server time (serverTime / setServerTime) for the strongest signal.",
+  },
+  {
+    detectorId: "unsafe_wifi",
+    dartField: "unsafeWifiDetection",
+    kotlinField: "unsafeWifiDetection",
+    consequenceIfDisabled:
+      "Sessions on open or WEP hotspots — where anyone nearby can watch or tamper with unprotected traffic — look the same as a home network. Needs ACCESS_WIFI_STATE and ACCESS_NETWORK_STATE in the app manifest.",
+  },
+  {
+    detectorId: "screen_recording",
+    dartField: "screenRecordingDetection",
+    kotlinField: "screenRecordingDetection",
+    consequenceIfDisabled:
+      "A screen recording of balances, card details or OTP screens happens with no record. Android 15+ only; needs the DETECT_SCREEN_RECORDING permission in the app manifest.",
   },
 ];
 
