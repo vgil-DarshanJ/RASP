@@ -172,7 +172,12 @@ model SecurityEvent {
   receivedAt       DateTime     @default(now())
   ipAddress        String?
 
+  /// Set when the event arrived inside a signed evidence envelope.
+  envelope         EvidenceEnvelope? @relation(fields: [envelopeId], references: [id])
+  envelopeId       String?
+
   @@index([applicationId, receivedAt])
+  @@index([envelopeId])
   @@index([applicationId, detectorId])
   @@index([applicationId, status])
   @@map("security_events")
@@ -185,26 +190,60 @@ enum AlertSeverity {
   CRITICAL
 }
 
-/// A registered device with its ECDSA P-256 public key for evidence
-/// envelope verification. The attestation certificate chain is stored
-/// for backend verification of the key's hardware-backed origin.
+/// One device identity key (EC P-256, held in the device's Keystore) that
+/// evidence envelopes are verified against. One row per KEY, never
+/// overwritten: a reinstall or key rotation registers a new row, so a
+/// request that knows another device's `deviceId` cannot replace that
+/// device's key. `deviceId` is an advisory label only.
 model DeviceRegistration {
-  id              String   @id @default(cuid())
-  application     Application @relation(fields: [applicationId], references: [id])
-  applicationId   String
-  deviceId        String   // The SDK's device_id (ANDROID_ID or install-scoped UUID)
-  deviceKeyId     String   @unique // SHA-256 of SPKI (Base64), used as lookup key for envelopes
-  publicKey       String   // Base64-encoded X.509 SPKI (EC P-256)
-  attestationChain String[] // Base64-encoded DER certificates, leaf first
-  sdkVersion      String
-  createdAt       DateTime @default(now())
-  lastSeenAt      DateTime @default(now())
-  lastCounter     BigInt   @default(0) // Last accepted monotonic counter
-  lastNonce       String?  // Last accepted nonce (for replay protection)
+  id                 String   @id @default(cuid())
+  application        Application @relation(fields: [applicationId], references: [id])
+  applicationId      String
+  /// Package name the key was registered for; envelopes must carry the same `appId`.
+  appId              String
+  deviceId           String?  // advisory: the SDK's device id, if sent
+  deviceKeyId        String   @unique // Base64(SHA-256(SPKI DER)) — envelope lookup key
+  publicKey          String   // Base64 X.509 SPKI (EC P-256)
+  attestationChain   String[] // Base64 DER certificates, leaf first, as received
+  /// Result of parsing the chain at registration: PARSED | KEY_MISMATCH | UNPARSEABLE.
+  /// Not a verification against the Google attestation root.
+  attestationStatus  String
+  attestationDetails Json
+  sdkVersion         String
+  createdAt          DateTime @default(now())
+  lastSeenAt         DateTime @default(now())
+  /// Highest monotonic counter accepted from this key.
+  lastCounter        BigInt   @default(0)
+  envelopes          EvidenceEnvelope[]
 
-  @@unique([applicationId, deviceId])
-  @@index([applicationId])
+  @@index([applicationId, deviceId])
   @@map("device_registrations")
+}
+
+/// One accepted evidence envelope — the signed record behind the
+/// `SecurityEvent` rows it produced. Keeps the exact signed text and the
+/// signature so the evidence can be re-verified later. The unique indexes
+/// are the replay rules: a nonce, a counter value, or an event id can be
+/// accepted once per device key.
+model EvidenceEnvelope {
+  id                   String   @id @default(cuid())
+  eventId              String   @unique
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  applicationId        String
+  monotonicCounter     BigInt
+  nonce                String
+  eventTime            DateTime // device clock (advisory)
+  receivedAt           DateTime @default(now())
+  /// Canonical JSON that was verified (every field except `signature`).
+  signedPayload        String
+  signature            String   // Base64 DER ECDSA P-256
+  events               SecurityEvent[]
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, monotonicCounter])
+  @@index([applicationId, receivedAt])
+  @@map("evidence_envelopes")
 }
 
 /// Outbound alert policy for one application — "call this URL when a

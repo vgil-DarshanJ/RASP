@@ -54,26 +54,9 @@ export async function requireApiKey(
     return res.status(401).json({ error: "STALE_TIMESTAMP" });
   }
 
-  let credential;
-  try {
-    credential = await prisma.apiCredential.findUnique({
-      where: { apiKey },
-      include: { application: { select: { archivedAt: true } } },
-    });
-  } catch (err) {
-    console.error("[apiKey] lookup failed:", err);
-    return res.status(503).json({ error: "AUTH_BACKEND_UNAVAILABLE" });
-  }
-
-  if (!credential || credential.status !== "ACTIVE") {
-    return res.status(401).json({ error: "INVALID_OR_REVOKED_API_KEY" });
-  }
-  // An archived application is a decommissioned integration — its SDK
-  // should stop being able to ship new events the same way a revoked
-  // credential does, even though the credential row itself is untouched.
-  if (credential.application.archivedAt) {
-    return res.status(401).json({ error: "APPLICATION_ARCHIVED" });
-  }
+  const lookup = await resolveActiveCredential(apiKey);
+  if (!lookup.ok) return res.status(lookup.status).json({ error: lookup.error });
+  const credential = lookup.credential;
 
   let apiSecret: string;
   try {
@@ -102,5 +85,60 @@ export async function requireApiKey(
   }
 
   req.applicationId = credential.applicationId;
+  next();
+}
+
+type CredentialLookup =
+  | { ok: true; credential: { applicationId: string; apiSecretEncrypted: string } }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Looks up `apiKey` fresh (so revocation takes effect immediately) and
+ * requires an ACTIVE credential on a non-archived application.
+ */
+async function resolveActiveCredential(apiKey: string): Promise<CredentialLookup> {
+  let credential;
+  try {
+    credential = await prisma.apiCredential.findUnique({
+      where: { apiKey },
+      include: { application: { select: { archivedAt: true } } },
+    });
+  } catch (err) {
+    console.error("[apiKey] lookup failed:", err);
+    return { ok: false, status: 503, error: "AUTH_BACKEND_UNAVAILABLE" };
+  }
+
+  if (!credential || credential.status !== "ACTIVE") {
+    return { ok: false, status: 401, error: "INVALID_OR_REVOKED_API_KEY" };
+  }
+  // An archived application is a decommissioned integration — its SDK
+  // should stop being able to ship new events the same way a revoked
+  // credential does, even though the credential row itself is untouched.
+  if (credential.application.archivedAt) {
+    return { ok: false, status: 401, error: "APPLICATION_ARCHIVED" };
+  }
+  return { ok: true, credential };
+}
+
+/**
+ * Identifies the application from `X-Api-Key` alone — no HMAC, timestamp or
+ * signature-replay check. Only for evidence envelopes, which carry their own
+ * authentication (a signature by a registered device key, a per-key counter
+ * and nonce; see `ingestion/envelope.ts`). The key still has to be ACTIVE on
+ * a non-archived application, so revocation and archiving still stop
+ * envelope ingestion.
+ */
+export async function requireApiKeyIdentity(
+  req: ApiKeyedRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  const apiKey = req.header("X-Api-Key");
+  if (!apiKey) return res.status(401).json({ error: "MISSING_API_KEY" });
+
+  const lookup = await resolveActiveCredential(apiKey);
+  if (!lookup.ok) return res.status(lookup.status).json({ error: lookup.error });
+
+  req.applicationId = lookup.credential.applicationId;
   next();
 }
