@@ -267,6 +267,22 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
     description:
       "Another installed app declares this app's task affinity, so its screens can appear inside this app's task (fake login screens).",
   },
+
+  // ── Task 3c ────────────────────────────────────────────────────────────
+  device_state_attestation: {
+    title: "Device State Attestation",
+    category: "Device Integrity",
+    severity: "high",
+    description:
+      "The hardware key attestation reports an unlocked bootloader or unverified/failed verified boot (or, if configured, an outdated security patch). Read on the device; the backend check against Google's attestation roots is still to come.",
+  },
+  malware_reputation: {
+    title: "Known Malware Installed",
+    category: "Device Integrity",
+    severity: "critical",
+    description:
+      "An installed app is on the signed malware reputation list the app was configured with. Evidence names the package, category and severity from the list.",
+  },
 };
 
 export const CATEGORY_COLORS: Record<AlertCategory, { bg: string; text: string; dot: string }> = {

@@ -265,6 +265,20 @@ export const DETECTOR_GUIDE: DetectorGuideEntry[] = [
     consequenceIfDisabled:
       "A malicious app that places its screens in your app's task (a fake login page shown when the customer opens your app) goes unnoticed. Scans apps with a launcher icon on Android 11+.",
   },
+  {
+    detectorId: "device_state_attestation",
+    dartField: "deviceStateAttestationDetection",
+    kotlinField: "deviceStateAttestationDetection",
+    consequenceIfDisabled:
+      "A device with an unlocked bootloader or a modified boot image (the usual first step to rooting) is not flagged from hardware-attested data. Optional maxSecurityPatchAgeDays flags devices with an outdated security patch.",
+  },
+  {
+    detectorId: "malware_reputation",
+    dartField: "malwareReputationDetection",
+    kotlinField: "malwareReputationDetection",
+    consequenceIfDisabled:
+      "Known banking trojans or remote-access tools installed next to your app go unreported. Needs a signed list (malwareReputationListJson) and its public key (malwareReputationPublicKey); list packages must be visible to the app (manifest <queries>).",
+  },
 ];
 
 export function guideEntryFor(detectorId: string): DetectorGuideEntry | undefined {
