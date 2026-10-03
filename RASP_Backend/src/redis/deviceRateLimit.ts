@@ -42,37 +42,61 @@ export function claimedDevice(body: unknown): string {
 }
 
 /**
- * Per app + device rate limit, applied before the (more expensive) credential
- * lookup and signature checks. One app's devices no longer share a single
- * budget: each device gets `limit` requests per window.
+ * Three rate limits, applied before the (more expensive) credential lookup
+ * and signature checks. A request must pass all of them:
  *
- * The bucket is keyed by the raw `X-Api-Key` (identifies the app; checked
- * for real by the auth middleware that runs next) plus the claimed device.
- * A client that invents a new device id per request gets a new bucket each
- * time; such requests still fail authentication, but this limiter no longer
- * caps them per app.
+ * 1. per client IP (`req.ip`; set TRUST_PROXY when behind a load balancer,
+ *    or every request shares the proxy's IP) — also applies to requests
+ *    without an API key;
+ * 2. per API key — a coarse ceiling for the whole app, so inventing a new
+ *    device id per request does not buy an unlimited budget;
+ * 3. per app + device — each device gets its own budget, so one busy or
+ *    misbehaving device cannot use up the app's.
+ *
+ * The API key and device are read from the unauthenticated request; the
+ * auth middleware that runs next checks them for real. A 429 names the
+ * limit that was hit (`limit`: "ip" | "api_key" | "device").
  */
 export function deviceRateLimiter(options: {
   scope: string;
+  /** Per-device limit env var (and its default). */
   limitEnv: string;
-  windowEnv: string;
   defaultLimit: number;
+  /** Per-API-key ceiling env var (and its default). */
+  apiKeyLimitEnv: string;
+  defaultApiKeyLimit: number;
+  /** Per-IP ceiling env var (and its default). */
+  ipLimitEnv: string;
+  defaultIpLimit: number;
+  windowEnv: string;
   defaultWindowSeconds: number;
   check?: RateCheck;
 }) {
   const check = options.check ?? checkRateLimit;
+  const envNumber = (name: string, fallback: number) => Number(process.env[name]) || fallback;
+
   return async function rateLimitPerDevice(req: Request, res: Response, next: NextFunction) {
+    const windowSeconds = envNumber(options.windowEnv, options.defaultWindowSeconds);
     const apiKey = req.header("X-Api-Key");
-    if (!apiKey) return next(); // the auth middleware reports the real error
 
-    const limit = Number(process.env[options.limitEnv]) || options.defaultLimit;
-    const windowSeconds = Number(process.env[options.windowEnv]) || options.defaultWindowSeconds;
-    const key = `${options.scope}:${apiKey}:${claimedDevice(req.body)}`;
+    const buckets: Array<{ limit: "ip" | "api_key" | "device"; key: string; max: number }> = [
+      { limit: "ip", key: `${options.scope}:ip:${req.ip ?? "unknown"}`, max: envNumber(options.ipLimitEnv, options.defaultIpLimit) },
+    ];
+    if (apiKey) {
+      buckets.push(
+        { limit: "api_key", key: `${options.scope}:key:${apiKey}`, max: envNumber(options.apiKeyLimitEnv, options.defaultApiKeyLimit) },
+        { limit: "device", key: `${options.scope}:${apiKey}:${claimedDevice(req.body)}`, max: envNumber(options.limitEnv, options.defaultLimit) },
+      );
+    }
 
-    const { allowed, remaining } = await check(key, limit, windowSeconds);
-    res.setHeader("X-RateLimit-Limit", String(limit));
-    res.setHeader("X-RateLimit-Remaining", String(remaining));
-    if (!allowed) return res.status(429).json({ error: "RATE_LIMIT_EXCEEDED" });
-    next();
+    for (const bucket of buckets) {
+      const { allowed, remaining } = await check(bucket.key, bucket.max, windowSeconds);
+      if (bucket.limit === "device") {
+        res.setHeader("X-RateLimit-Limit", String(bucket.max));
+        res.setHeader("X-RateLimit-Remaining", String(remaining));
+      }
+      if (!allowed) return res.status(429).json({ error: "RATE_LIMIT_EXCEEDED", limit: bucket.limit });
+    }
+    next(); // no API key: the auth middleware reports MISSING_API_KEY
   };
 }

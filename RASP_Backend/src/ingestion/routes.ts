@@ -21,6 +21,10 @@ const rateLimitIngestion = deviceRateLimiter({
   limitEnv: "INGESTION_RATE_LIMIT_PER_WINDOW",
   windowEnv: "INGESTION_RATE_LIMIT_WINDOW_SECONDS",
   defaultLimit: 60,
+  apiKeyLimitEnv: "INGESTION_RATE_LIMIT_PER_API_KEY",
+  defaultApiKeyLimit: 6000,
+  ipLimitEnv: "INGESTION_RATE_LIMIT_PER_IP",
+  defaultIpLimit: 1200,
   defaultWindowSeconds: 60,
 });
 

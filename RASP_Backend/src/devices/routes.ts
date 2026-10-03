@@ -16,6 +16,10 @@ const rateLimitRegistration = deviceRateLimiter({
   limitEnv: "DEVICE_REGISTRATION_RATE_LIMIT_PER_WINDOW",
   windowEnv: "DEVICE_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS",
   defaultLimit: 60,
+  apiKeyLimitEnv: "DEVICE_REGISTRATION_RATE_LIMIT_PER_API_KEY",
+  defaultApiKeyLimit: 600,
+  ipLimitEnv: "DEVICE_REGISTRATION_RATE_LIMIT_PER_IP",
+  defaultIpLimit: 120,
   defaultWindowSeconds: 60,
 });
 

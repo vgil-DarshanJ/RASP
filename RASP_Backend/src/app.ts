@@ -21,6 +21,13 @@ import { webhooksRouter } from "./webhooks/routes";
 export function createApp() {
   const app = express();
 
+  // Behind a load balancer/reverse proxy, req.ip is the proxy's address unless
+  // Express is told to trust X-Forwarded-For; the per-IP rate limit needs the
+  // client IP. TRUST_PROXY: a hop count ("1") or an Express trust-proxy value
+  // ("loopback", a subnet list). Unset = trust nothing (direct connections).
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy) app.set("trust proxy", /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
+
   const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000").split(",");
   app.use(cors({ origin: allowedOrigins, credentials: true }));
 
