@@ -17,37 +17,20 @@ import { ingestionRouter } from "./ingestion/routes";
 import { devicesRouter } from "./devices/routes";
 import { dashboardRouter } from "./dashboard/routes";
 import { webhooksRouter } from "./webhooks/routes";
+import { ipRiskRouter } from "./ipRisk/routes";
+import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 
 export function createApp() {
   const app = express();
 
-  // Behind a load balancer/reverse proxy, req.ip is the proxy's address unless
-  // Express is told to trust X-Forwarded-For; the per-IP rate limit needs the
-  // client IP. TRUST_PROXY: a hop count ("1") or an Express trust-proxy value
-  // ("loopback", a subnet list). Unset = trust nothing (direct connections).
-  const trustProxy = process.env.TRUST_PROXY;
-  if (trustProxy) app.set("trust proxy", /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
+  // Client IP behind a proxy (TRUST_PROXY) — see requestSetup.ts.
+  applyTrustProxy(app);
 
   const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000").split(",");
   app.use(cors({ origin: allowedOrigins, credentials: true }));
 
-  app.use(
-    express.json({
-      limit: "1mb",
-      // Captures the EXACT bytes received, before Express's JSON parser
-      // normalizes them into an object — required by the ingestion
-      // endpoint's HMAC verification (middleware/apiKey.ts), which must
-      // recompute a signature over the same bytes the SDK actually signed
-      // and sent. A re-serialization of `req.body` (JSON.stringify) could
-      // differ in whitespace/key order and would make every legitimate
-      // signature fail to verify. Attached to every request (not just
-      // /v1/events) — cheap (already-buffered body, no extra I/O) and
-      // simpler than a route-scoped body parser.
-      verify: (req, _res, buf) => {
-        (req as Request & { rawBody?: Buffer }).rawBody = buf;
-      },
-    }),
-  );
+  // JSON body + exact raw bytes for HMAC verification — see requestSetup.ts.
+  app.use(jsonBodyParser());
 
   /** Unauthenticated — real dependency checks (not just "the process is
    *  alive"), so a broken DB/Redis connection is visible immediately
@@ -69,6 +52,7 @@ export function createApp() {
   app.use("/v1/devices", devicesRouter);
   app.use("/v1/dashboard", dashboardRouter);
   app.use("/v1/webhooks", webhooksRouter);
+  app.use("/v1/ip-risk", ipRiskRouter);
 
   // Last-resort error handler — every route above is async; an unhandled
   // rejection must still resolve to a JSON 500, never an unhandled crash
