@@ -5,6 +5,7 @@ import { prisma } from "../db/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { SDK_CATALOG } from "../sdk-distribution/catalog";
 import { encryptSecret } from "../crypto/secretBox";
+import { publicIngestionUrl } from "./ingestionUrl";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
@@ -54,7 +55,7 @@ credentialsRouter.get("/", async (req: AuthedRequest, res) => {
 
   res.json({
     organizationId: req.user!.organizationId,
-    ingestionUrl: process.env.PUBLIC_INGESTION_URL || "http://localhost:4000/v1/events",
+    ingestionUrl: publicIngestionUrl(),
     credentials: credentials.map((c) => ({
       ...c,
       application: { ...c.application, deviceCount: deviceCountByApp.get(c.application.id) ?? 0 },
@@ -156,7 +157,7 @@ credentialsRouter.post("/applications/:applicationId/credentials", async (req: A
     platform: app.platform,
     api_key: apiKey,
     api_secret: apiSecret, // shown ONCE — not retrievable again after this response
-    ingestion_url: process.env.PUBLIC_INGESTION_URL || "http://192.168.2.208:4000/v1/events",
+    ingestion_url: publicIngestionUrl(),
     sdk_min_version: catalogEntry?.minVersion ?? null,
     issued_at: credential.createdAt.toISOString(),
   });
