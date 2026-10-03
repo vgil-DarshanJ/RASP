@@ -481,6 +481,10 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
     <button
       type="button"
       onClick={async (e) => {
+        // Capture before any await: React clears e.currentTarget once the
+        // handler yields, so reading it after the clipboard call gave null.
+        const el = e.currentTarget;
+        const original = el.textContent;
         let ok = true;
         try {
           if (navigator.clipboard?.writeText) {
@@ -499,8 +503,6 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
         } catch {
           ok = false;
         }
-        const el = e.currentTarget;
-        const original = el.textContent;
         el.textContent = ok ? "Copied" : "Copy failed";
         setTimeout(() => {
           el.textContent = original;
