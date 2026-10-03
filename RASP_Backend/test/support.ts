@@ -79,7 +79,7 @@ export class MemoryRegistrationRepository implements RegistrationRepository {
 
   async findByKeyId(deviceKeyId: string) {
     const r = this.rows.find((x) => x.deviceKeyId === deviceKeyId);
-    return r ? { id: r.id, applicationId: r.applicationId, appId: r.appId, deviceKeyId: r.deviceKeyId, attestationStatus: r.attestationStatus } : null;
+    return r ? { id: r.id, applicationId: r.applicationId, appId: r.appId, deviceKeyId: r.deviceKeyId, attestationStatus: r.attestationStatus, attestationVerdict: r.attestationVerdict } : null;
   }
 
   async create(input: NewRegistration) {
@@ -90,11 +90,12 @@ export class MemoryRegistrationRepository implements RegistrationRepository {
       appId: input.appId,
       deviceKeyId: input.deviceKeyId,
       attestationStatus: input.attestation.status,
+      attestationVerdict: input.attestation.verdict,
       input,
       lastSeenAt: input.now,
     };
     this.rows.push(row);
-    return { id: row.id, applicationId: row.applicationId, appId: row.appId, deviceKeyId: row.deviceKeyId, attestationStatus: row.attestationStatus };
+    return { id: row.id, applicationId: row.applicationId, appId: row.appId, deviceKeyId: row.deviceKeyId, attestationStatus: row.attestationStatus, attestationVerdict: row.attestationVerdict };
   }
 
   async touch(id: string, now: Date) {

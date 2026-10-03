@@ -28,6 +28,7 @@ export interface RegisteredKey {
   appId: string;
   deviceKeyId: string;
   attestationStatus: string;
+  attestationVerdict: string;
 }
 
 export interface NewRegistration {
@@ -105,7 +106,7 @@ export async function registerDevice(args: {
     if (!winner) return { status: 500, body: { error: "REGISTRATION_FAILED" } };
     return existingKey(winner, args.applicationId, appId, args.now, args.repo);
   }
-  return { status: 201, body: { registered: true, deviceKeyId, attestation } };
+  return { status: 201, body: { registered: true, deviceKeyId, attestationVerdict: attestation.verdict, attestation } };
 }
 
 async function existingKey(
@@ -129,6 +130,7 @@ async function existingKey(
       existing: true,
       deviceKeyId: existing.deviceKeyId,
       attestationStatus: existing.attestationStatus,
+      attestationVerdict: existing.attestationVerdict,
     },
   };
 }

@@ -208,6 +208,9 @@ model DeviceRegistration {
   /// Result of parsing the chain at registration: PARSED | KEY_MISMATCH | UNPARSEABLE.
   /// Not a verification against the Google attestation root.
   attestationStatus  String
+  /// verified | unverified | software-only — see AttestationVerdict in src/crypto/ecdsa.ts.
+  /// Recorded only; registration is not rejected on it (yet).
+  attestationVerdict String   @default("unverified")
   attestationDetails Json
   sdkVersion         String
   createdAt          DateTime @default(now())

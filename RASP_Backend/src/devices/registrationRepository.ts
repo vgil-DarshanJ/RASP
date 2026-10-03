@@ -8,6 +8,7 @@ const selectKey = {
   appId: true,
   deviceKeyId: true,
   attestationStatus: true,
+  attestationVerdict: true,
 } as const;
 
 /** Postgres-backed [RegistrationRepository]; `deviceKeyId` is unique. */
@@ -27,6 +28,7 @@ export const prismaRegistrationRepository: RegistrationRepository = {
           publicKey: input.publicKey,
           attestationChain: input.attestationChain,
           attestationStatus: input.attestation.status,
+          attestationVerdict: input.attestation.verdict,
           attestationDetails: input.attestation as unknown as Prisma.InputJsonValue,
           sdkVersion: input.sdkVersion,
           createdAt: input.now,

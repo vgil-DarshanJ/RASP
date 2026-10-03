@@ -116,6 +116,33 @@ describe("device registration", () => {
     assert.equal(out.body.error, "INVALID_REGISTER_BODY");
   });
 
+  test("attestation verdict is recorded on the row and shown in the response", async () => {
+    const cases: Array<[string, unknown, string]> = [
+      ["TEE attestation chain", certs.attested, "verified"],
+      ["Software-level attestation", certs.attestedSoftware, "software-only"],
+      ["single self-signed certificate", certs.selfSigned, "software-only"],
+      ["extension that is not a KeyDescription", certs.attestedBadExtension, "unverified"],
+      ["certificates in the wrong order", certs.attestedWrongOrder, "unverified"],
+      ["chain for another key", certs.otherSelfSigned, "unverified"],
+      ["unparseable chain", ["bm90IGEgY2VydA=="], "unverified"],
+    ];
+    for (const [name, chain, verdict] of cases) {
+      const repo = new MemoryRegistrationRepository();
+      const out = await register(repo, body({ attestationChain: chain }));
+      assert.equal(out.status, 201, `${name}: registration is not rejected`);
+      assert.equal(out.body.attestationVerdict, verdict, name);
+      assert.equal(repo.rows[0].attestationVerdict, verdict, `${name}: stored on the row`);
+    }
+  });
+
+  test("re-registering an existing key returns its stored verdict", async () => {
+    const repo = new MemoryRegistrationRepository();
+    await register(repo, body({ attestationChain: certs.attestedSoftware }));
+    const again = await register(repo, body({ attestationChain: certs.attestedSoftware }));
+    assert.equal(again.status, 200);
+    assert.equal(again.body.attestationVerdict, "software-only");
+  });
+
   test("inspectAttestationChain: empty chain is UNPARSEABLE", () => {
     const r = inspectAttestationChain(Buffer.from(certs.publicKey, "base64"), []);
     assert.equal(r.status, "UNPARSEABLE");

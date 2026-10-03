@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { attestationExtension, attestationSecurityLevel } from "./keyAttestation";
 
 /**
  * ECDSA P-256 (ES256) signature verification for evidence envelopes.
@@ -93,8 +94,26 @@ const KEY_ATTESTATION_OID_DER = Buffer.from([0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04,
 
 export type AttestationStatus = "PARSED" | "KEY_MISMATCH" | "UNPARSEABLE";
 
+/**
+ * Recorded on the device row; registration is never rejected because of it (yet).
+ * - `verified`: chain parses, leaf is the registered key, each certificate is
+ *   signed by the next, more than one certificate, and the leaf's attestation
+ *   extension reports a hardware security level (TEE or StrongBox).
+ * - `software-only`: chain parses and the leaf is the registered key, but there
+ *   is no hardware attestation (no extension, Software level, or a single
+ *   self-signed certificate).
+ * - `unverified`: anything else (unparseable, different key, broken chain,
+ *   unreadable extension).
+ * Not yet checked: that the chain ends at a Google attestation root
+ * (`rootVerified` stays false).
+ */
+export type AttestationVerdict = "verified" | "unverified" | "software-only";
+
 export interface AttestationInspection {
+  verdict: AttestationVerdict;
   status: AttestationStatus;
+  /** From the leaf's KeyDescription: 0 Software, 1 TEE, 2 StrongBox; `null` when absent/unreadable. */
+  attestationSecurityLevel: number | null;
   chainLength: number;
   /** Leaf certificate's public key equals the registered key. */
   leafMatchesKey: boolean;
@@ -117,7 +136,9 @@ export interface AttestationInspection {
  */
 export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]): AttestationInspection {
   const base: AttestationInspection = {
+    verdict: "unverified",
     status: "UNPARSEABLE",
+    attestationSecurityLevel: null,
     chainLength: chainBase64.length,
     leafMatchesKey: false,
     chainLinked: false,
@@ -147,12 +168,32 @@ export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]):
     chainLinked = false;
   }
 
+  let extension: Buffer | null = null;
+  let securityLevel: number | null = null;
+  let extensionError: string | undefined;
+  try {
+    extension = attestationExtension(leaf.raw);
+    if (extension) securityLevel = attestationSecurityLevel(extension);
+  } catch (err) {
+    extensionError = err instanceof Error ? err.message : "attestation extension unreadable";
+  }
+  const selfSignedOnly = certs.length === 1 && chainLinked;
+
+  let verdict: AttestationVerdict;
+  if (!leafMatchesKey || !chainLinked || extensionError) verdict = "unverified";
+  else if (selfSignedOnly || extension === null || securityLevel === 0) verdict = "software-only";
+  else if (securityLevel === 1 || securityLevel === 2) verdict = "verified";
+  else verdict = "unverified";
+
   return {
     ...base,
+    verdict,
     status: leafMatchesKey ? "PARSED" : "KEY_MISMATCH",
+    attestationSecurityLevel: securityLevel,
     leafMatchesKey,
     chainLinked,
-    selfSignedOnly: certs.length === 1 && chainLinked,
-    hasKeyAttestationExtension: leaf.raw.includes(KEY_ATTESTATION_OID_DER),
+    selfSignedOnly,
+    hasKeyAttestationExtension: extension !== null || leaf.raw.includes(KEY_ATTESTATION_OID_DER),
+    ...(extensionError ? { error: extensionError } : {}),
   };
 }
