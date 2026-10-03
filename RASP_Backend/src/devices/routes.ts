@@ -1,29 +1,23 @@
-import { NextFunction, Response, Router } from "express";
+import { Router } from "express";
 import { ApiKeyedRequest, requireApiKey } from "../middleware/apiKey";
-import { checkRateLimit } from "../redis/rateLimit";
+import { deviceRateLimiter } from "../redis/deviceRateLimit";
 import { registerDevice } from "./registration";
 import { prismaRegistrationRepository } from "./registrationRepository";
 
 export const devicesRouter = Router();
 
 /**
- * Per-API-key rate limit for registrations, in its own Redis bucket
- * (`register:<key>`) so registrations and event ingestion do not consume
- * each other's budget. Runs before the DB lookup, like the ingestion limiter.
+ * Per app + device (the key id the registered public key will get) limit
+ * for registrations, in its own Redis bucket so registrations and event
+ * ingestion do not consume each other's budget. Runs before the DB lookup.
  */
-async function rateLimitRegistration(req: ApiKeyedRequest, res: Response, next: NextFunction) {
-  const apiKey = req.header("X-Api-Key");
-  if (!apiKey) return next(); // requireApiKey reports the real error
-
-  const limit = Number(process.env.DEVICE_REGISTRATION_RATE_LIMIT_PER_WINDOW) || 60;
-  const windowSeconds = Number(process.env.DEVICE_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS) || 60;
-
-  const { allowed, remaining } = await checkRateLimit(`register:${apiKey}`, limit, windowSeconds);
-  res.setHeader("X-RateLimit-Limit", String(limit));
-  res.setHeader("X-RateLimit-Remaining", String(remaining));
-  if (!allowed) return res.status(429).json({ error: "RATE_LIMIT_EXCEEDED" });
-  next();
-}
+const rateLimitRegistration = deviceRateLimiter({
+  scope: "register",
+  limitEnv: "DEVICE_REGISTRATION_RATE_LIMIT_PER_WINDOW",
+  windowEnv: "DEVICE_REGISTRATION_RATE_LIMIT_WINDOW_SECONDS",
+  defaultLimit: 60,
+  defaultWindowSeconds: 60,
+});
 
 /**
  * POST /v1/devices/register — binds a device's EC P-256 key to the calling

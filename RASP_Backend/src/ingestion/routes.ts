@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { ApiKeyedRequest, requireApiKey, requireApiKeyIdentity } from "../middleware/apiKey";
 import { recordEventForDashboard } from "../redis/dashboardCache";
-import { checkRateLimit } from "../redis/rateLimit";
+import { deviceRateLimiter } from "../redis/deviceRateLimit";
 import { maybeTriggerWebhook } from "../webhooks/dispatch";
 import { isEnvelopeBody, processEnvelope } from "./envelope";
 import { prismaEnvelopeRepository } from "./envelopeRepository";
@@ -11,29 +11,18 @@ import { prismaEnvelopeRepository } from "./envelopeRepository";
 export const ingestionRouter = Router();
 
 /**
- * Rate-limits by the raw `X-Api-Key` header value, BEFORE the (more
- * expensive) DB lookup + HMAC verification in `requireApiKey` — a flood
- * of requests against one key gets rejected cheaply rather than paying
- * for a Postgres round-trip and a decrypt+HMAC computation per request
- * first. Keying on the unvalidated header is safe: an attacker spraying
- * made-up key strings only grows Redis counters for keys that will fail
- * `requireApiKey` anyway, and never grants them anything.
+ * Per app + device rate limit, BEFORE the (more expensive) DB lookup and
+ * signature checks — see `deviceRateLimiter`. Each device of an app gets
+ * INGESTION_RATE_LIMIT_PER_WINDOW requests per window (it was one budget
+ * shared by every device of the app).
  */
-async function rateLimitIngestion(req: ApiKeyedRequest, res: Response, next: NextFunction) {
-  const apiKey = req.header("X-Api-Key");
-  if (!apiKey) return next(); // requireApiKey below reports the real error
-
-  const limit = Number(process.env.INGESTION_RATE_LIMIT_PER_WINDOW) || 60;
-  const windowSeconds = Number(process.env.INGESTION_RATE_LIMIT_WINDOW_SECONDS) || 60;
-
-  const { allowed, remaining } = await checkRateLimit(apiKey, limit, windowSeconds);
-  res.setHeader("X-RateLimit-Limit", String(limit));
-  res.setHeader("X-RateLimit-Remaining", String(remaining));
-  if (!allowed) {
-    return res.status(429).json({ error: "RATE_LIMIT_EXCEEDED" });
-  }
-  next();
-}
+const rateLimitIngestion = deviceRateLimiter({
+  scope: "ingest",
+  limitEnv: "INGESTION_RATE_LIMIT_PER_WINDOW",
+  windowEnv: "INGESTION_RATE_LIMIT_WINDOW_SECONDS",
+  defaultLimit: 60,
+  defaultWindowSeconds: 60,
+});
 
 /**
  * Evidence envelopes authenticate with a registered device key's signature
