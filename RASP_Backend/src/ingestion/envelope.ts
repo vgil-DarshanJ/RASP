@@ -124,9 +124,9 @@ const reject = (status: number, error: string, extra: Record<string, unknown> = 
  *    lost response must not be refused forever. Same `eventId` with
  *    different content → 409.
  * 5. Event time within the last 7 days (offline queue) and at most 5 minutes
- *    ahead → else 401 EVENT_TOO_OLD / EVENT_FROM_FUTURE.
- * 6. Nonce never accepted before for this key → else 401 REPLAYED_NONCE.
- * 7. Counter greater than the last accepted one for this key → else 401
+ *    ahead → else 422 EVENT_TOO_OLD / EVENT_FROM_FUTURE (the SDK drops these).
+ * 6. Nonce never accepted before for this key → else 409 REPLAYED_NONCE.
+ * 7. Counter greater than the last accepted one for this key → else 409
  *    COUNTER_NOT_INCREASING. Enforced again atomically at store time.
  */
 export async function processEnvelope(args: {
@@ -171,11 +171,11 @@ export async function processEnvelope(args: {
     return reject(409, "EVENT_ID_REUSED");
   }
 
-  if (envelope.eventTimeMillis < now - ENVELOPE_MAX_AGE_MS) return reject(401, "EVENT_TOO_OLD");
-  if (envelope.eventTimeMillis > now + ENVELOPE_MAX_FUTURE_MS) return reject(401, "EVENT_FROM_FUTURE");
+  if (envelope.eventTimeMillis < now - ENVELOPE_MAX_AGE_MS) return reject(422, "EVENT_TOO_OLD");
+  if (envelope.eventTimeMillis > now + ENVELOPE_MAX_FUTURE_MS) return reject(422, "EVENT_FROM_FUTURE");
 
-  if (await repo.isNonceUsed(device.id, envelope.nonce)) return reject(401, "REPLAYED_NONCE");
-  if (BigInt(envelope.monotonicCounter) <= device.lastCounter) return reject(401, "COUNTER_NOT_INCREASING");
+  if (await repo.isNonceUsed(device.id, envelope.nonce)) return reject(409, "REPLAYED_NONCE");
+  if (BigInt(envelope.monotonicCounter) <= device.lastCounter) return reject(409, "COUNTER_NOT_INCREASING");
 
   const result = await repo.storeEnvelope({
     device,
@@ -196,9 +196,9 @@ export async function processEnvelope(args: {
     case "stored":
       return { status: 201, body: { accepted: result.events.length }, created: result.events };
     case "counter_not_increasing":
-      return reject(401, "COUNTER_NOT_INCREASING");
+      return reject(409, "COUNTER_NOT_INCREASING");
     case "nonce_reused":
-      return reject(401, "REPLAYED_NONCE");
+      return reject(409, "REPLAYED_NONCE");
     case "event_id_reused":
       return reject(409, "EVENT_ID_REUSED");
   }

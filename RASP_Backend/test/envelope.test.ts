@@ -134,7 +134,7 @@ describe("evidence envelope", () => {
     // A different envelope reusing the accepted nonce.
     const reuse = signEnvelope(device, NOW, { monotonicCounter: 2, nonce: (first.fields as any).nonce });
     const out = await run(repo, reuse.body);
-    assert.equal(out.status, 401);
+    assert.equal(out.status, 409);
     assert.equal(out.body.error, "REPLAYED_NONCE");
     assert.equal(repo.envelopes.length, 1);
   });
@@ -144,11 +144,11 @@ describe("evidence envelope", () => {
     assert.equal((await run(repo, signEnvelope(device, NOW, { monotonicCounter: 5 }).body)).status, 201);
 
     let out = await run(repo, signEnvelope(device, NOW, { monotonicCounter: 4 }).body);
-    assert.equal(out.status, 401);
+    assert.equal(out.status, 409);
     assert.equal(out.body.error, "COUNTER_NOT_INCREASING");
 
     out = await run(repo, signEnvelope(device, NOW, { monotonicCounter: 5 }).body);
-    assert.equal(out.status, 401);
+    assert.equal(out.status, 409);
     assert.equal(out.body.error, "COUNTER_NOT_INCREASING");
 
     assert.equal((await run(repo, signEnvelope(device, NOW, { monotonicCounter: 6 }).body)).status, 201);
@@ -162,14 +162,14 @@ describe("evidence envelope", () => {
     assert.equal(out.status, 201);
 
     out = await run(repo, signEnvelope(device, NOW - ENVELOPE_MAX_AGE_MS - 60_000, { monotonicCounter: 2 }).body);
-    assert.equal(out.status, 401);
+    assert.equal(out.status, 422);
     assert.equal(out.body.error, "EVENT_TOO_OLD");
   });
 
   test("future event more than 5 minutes ahead is rejected", async () => {
     const { repo, device } = setup();
     let out = await run(repo, signEnvelope(device, NOW + ENVELOPE_MAX_FUTURE_MS + 1_000, { monotonicCounter: 1 }).body);
-    assert.equal(out.status, 401);
+    assert.equal(out.status, 422);
     assert.equal(out.body.error, "EVENT_FROM_FUTURE");
 
     out = await run(repo, signEnvelope(device, NOW + 4 * 60_000, { monotonicCounter: 2 }).body);
