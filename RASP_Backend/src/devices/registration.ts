@@ -5,6 +5,7 @@ import {
   inspectAttestationChain,
   parseEcP256PublicKey,
 } from "../crypto/ecdsa";
+import { normalizeCertHash } from "../ingestion/tamperAlerts";
 
 /**
  * `POST /v1/devices/register` body.
@@ -13,6 +14,9 @@ import {
  * - publicKey: Base64 X.509 SPKI of the EC P-256 device key (`RaspDeviceKey.exportPublicKeyBase64()`)
  * - attestationChain: Base64 DER certificates, leaf first (`RaspDeviceKey.exportAttestationChainBase64()`)
  * - sdkVersion
+ * - signingCertSha256: optional, the app's signing certificate SHA-256 (64 hex
+ *   characters; upper/lower case and ':' separators accepted; stored
+ *   uppercase without separators). Malformed → 400 INVALID_SIGNING_CERT.
  */
 export const registerSchema = z.object({
   appId: z.string().min(1).max(200),
@@ -20,6 +24,7 @@ export const registerSchema = z.object({
   publicKey: z.string().min(1).max(1000),
   attestationChain: z.array(z.string().min(1).max(20_000)).min(1).max(10),
   sdkVersion: z.string().min(1).max(50),
+  signingCertSha256: z.string().min(1).max(200).optional(),
 });
 
 export interface RegisteredKey {
@@ -40,6 +45,10 @@ export interface NewRegistration {
   attestationChain: string[];
   attestation: AttestationInspection;
   sdkVersion: string;
+  /** Normalized (uppercase hex), or null when the SDK did not send one. */
+  signingCertSha256: string | null;
+  /** Country of the registration request IP (ISO alpha-2), or null. */
+  registrationCountry: string | null;
   now: Date;
 }
 
@@ -75,12 +84,21 @@ export async function registerDevice(args: {
   applicationId: string;
   now: Date;
   repo: RegistrationRepository;
+  /** Country of the request IP (resolved by the route); stored with a new registration. */
+  registrationCountry?: string | null;
 }): Promise<RegistrationOutcome> {
   const parsed = registerSchema.safeParse(args.body);
   if (!parsed.success) {
     return { status: 400, body: { error: "INVALID_REGISTER_BODY", details: parsed.error.flatten() } };
   }
   const { appId, deviceId, publicKey, attestationChain, sdkVersion } = parsed.data;
+  let signingCertSha256: string | null = null;
+  if (parsed.data.signingCertSha256 !== undefined) {
+    signingCertSha256 = normalizeCertHash(parsed.data.signingCertSha256);
+    if (!signingCertSha256) {
+      return { status: 400, body: { error: "INVALID_SIGNING_CERT", reason: "expected 64 hex characters (':' separators allowed)" } };
+    }
+  }
 
   const key = parseEcP256PublicKey(publicKey);
   if (!key.ok) return { status: 400, body: { error: "INVALID_PUBLIC_KEY", reason: key.reason } };
@@ -99,6 +117,8 @@ export async function registerDevice(args: {
     attestationChain,
     attestation,
     sdkVersion,
+    signingCertSha256,
+    registrationCountry: args.registrationCountry ?? null,
     now: args.now,
   });
   if (created === "exists") {

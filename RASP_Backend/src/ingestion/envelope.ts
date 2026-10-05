@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalStringify, verifyEnvelopeSignature } from "../crypto/ecdsa";
+import { extractLocation, redactEnvelopePayload, StoredLocation } from "./location";
 
 /** Oldest accepted event time: envelopes may sit in the SDK's offline queue. */
 export const ENVELOPE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -52,6 +53,8 @@ export interface DeviceKeyRecord {
   deviceId: string | null;
   publicKey: string;
   lastCounter: bigint;
+  /** Signing certificate SHA-256 reported at registration (uppercase hex), if any. */
+  signingCertSha256?: string | null;
 }
 
 export interface NewEnvelopeEvent {
@@ -60,12 +63,17 @@ export interface NewEnvelopeEvent {
   evidence: unknown;
   reason?: string;
   clientObservedAt: Date;
+  /** Opted-in location for the event columns; null when none or not opted in. */
+  location: StoredLocation | null;
 }
 
 export interface StoreEnvelopeInput {
   device: DeviceKeyRecord;
   envelope: Envelope;
+  /** The verified canonical payload, with non-opted-in location removed (see [payloadRedacted]). */
   signedPayload: string;
+  /** true when location fields were removed from [signedPayload]; it then no longer re-verifies. */
+  payloadRedacted: boolean;
   ipAddress?: string;
   receivedAt: Date;
   events: NewEnvelopeEvent[];
@@ -104,6 +112,8 @@ export interface EnvelopeOutcome {
   status: number;
   body: Record<string, unknown>;
   created?: CreatedEvent[];
+  /** The signing device's registered signing certificate hash, for tamper alerts. */
+  deviceSigningCertSha256?: string | null;
 }
 
 const reject = (status: number, error: string, extra: Record<string, unknown> = {}): EnvelopeOutcome =>
@@ -177,24 +187,37 @@ export async function processEnvelope(args: {
   if (await repo.isNonceUsed(device.id, envelope.nonce)) return reject(409, "REPLAYED_NONCE");
   if (BigInt(envelope.monotonicCounter) <= device.lastCounter) return reject(409, "COUNTER_NOT_INCREASING");
 
+  // Location is kept only with location_opt_in === true; otherwise it is
+  // removed from the stored evidence and from the stored signed payload.
+  const stored = redactEnvelopePayload(signedPayload, canonicalStringify);
   const result = await repo.storeEnvelope({
     device,
     envelope,
-    signedPayload,
+    signedPayload: stored.payload,
+    payloadRedacted: stored.redacted,
     ipAddress,
     receivedAt: new Date(now),
-    events: envelope.detectorResults.map((r) => ({
-      detectorId: r.detectorId,
-      status: r.status,
-      evidence: r.evidence,
-      reason: r.reason,
-      clientObservedAt: new Date(r.observedAtMillis),
-    })),
+    events: envelope.detectorResults.map((r) => {
+      const location = extractLocation(r.evidence);
+      return {
+        detectorId: r.detectorId,
+        status: r.status,
+        evidence: location.evidence,
+        reason: r.reason,
+        clientObservedAt: new Date(r.observedAtMillis),
+        location: location.location,
+      };
+    }),
   });
 
   switch (result.outcome) {
     case "stored":
-      return { status: 201, body: { accepted: result.events.length }, created: result.events };
+      return {
+        status: 201,
+        body: { accepted: result.events.length },
+        created: result.events,
+        deviceSigningCertSha256: device.signingCertSha256 ?? null,
+      };
     case "counter_not_increasing":
       return reject(409, "COUNTER_NOT_INCREASING");
     case "nonce_reused":

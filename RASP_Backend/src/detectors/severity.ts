@@ -53,6 +53,9 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
 
   // App integrity
   tamper: "high",
+  // Raised by the backend (ingestion/tamperAlerts.ts) when a reported
+  // signing certificate differs from the expected one.
+  tamper_signing_mismatch: "high",
   untrusted_install_source: "high",
   repackage: "high",
 

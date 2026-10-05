@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { EnvelopeRepository, StoreResult } from "./envelope";
+import { locationColumns } from "./location";
 
 /**
  * Postgres-backed [EnvelopeRepository].
@@ -16,7 +17,10 @@ export const prismaEnvelopeRepository: EnvelopeRepository = {
   async findDeviceKey(deviceKeyId) {
     return prisma.deviceRegistration.findUnique({
       where: { deviceKeyId },
-      select: { id: true, applicationId: true, appId: true, deviceId: true, publicKey: true, lastCounter: true },
+      select: {
+        id: true, applicationId: true, appId: true, deviceId: true, publicKey: true, lastCounter: true,
+        signingCertSha256: true,
+      },
     });
   },
 
@@ -57,6 +61,7 @@ export const prismaEnvelopeRepository: EnvelopeRepository = {
             receivedAt: input.receivedAt,
             signedPayload: input.signedPayload,
             signature: envelope.signature,
+            payloadRedacted: input.payloadRedacted,
           },
           select: { id: true },
         });
@@ -75,6 +80,7 @@ export const prismaEnvelopeRepository: EnvelopeRepository = {
             receivedAt: input.receivedAt,
             ipAddress: input.ipAddress,
             envelopeId: stored.id,
+            ...locationColumns(e.location),
           })),
           select: {
             id: true, detectorId: true, status: true, deviceId: true,

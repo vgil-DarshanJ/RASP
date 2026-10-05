@@ -31,6 +31,8 @@ export const prismaRegistrationRepository: RegistrationRepository = {
           attestationVerdict: input.attestation.verdict,
           attestationDetails: input.attestation as unknown as Prisma.InputJsonValue,
           sdkVersion: input.sdkVersion,
+          signingCertSha256: input.signingCertSha256,
+          registrationCountry: input.registrationCountry,
           createdAt: input.now,
           lastSeenAt: input.now,
         },

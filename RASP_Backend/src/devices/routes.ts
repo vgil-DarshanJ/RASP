@@ -3,6 +3,18 @@ import { ApiKeyedRequest, requireApiKey } from "../middleware/apiKey";
 import { deviceRateLimiter } from "../redis/deviceRateLimit";
 import { registerDevice } from "./registration";
 import { prismaRegistrationRepository } from "./registrationRepository";
+import { loadIpRiskConfig } from "../ipRisk/ipRisk";
+import { resolveGeo } from "../ipRisk/routes";
+
+/** Country of the request IP for a new registration; null when unknown. Never fails the registration. */
+async function registrationCountryOf(req: ApiKeyedRequest): Promise<string | null> {
+  try {
+    const resolved = await resolveGeo(req, loadIpRiskConfig());
+    return resolved.geo?.country ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const devicesRouter = Router();
 
@@ -37,6 +49,7 @@ devicesRouter.post("/register", rateLimitRegistration, requireApiKey, async (req
     applicationId: req.applicationId!,
     now: new Date(),
     repo: prismaRegistrationRepository,
+    registrationCountry: await registrationCountryOf(req),
   });
   res.status(outcome.status).json(outcome.body);
 });

@@ -13,11 +13,12 @@ import {
   StoreResult,
 } from "../src/ingestion/envelope";
 import { NewRegistration, RegisteredKey, RegistrationRepository } from "../src/devices/registration";
+import type { StoredLocation } from "../src/ingestion/location";
 
 export class MemoryEnvelopeRepository implements EnvelopeRepository {
   devices = new Map<string, DeviceKeyRecord>(); // by deviceKeyId
-  envelopes: { id: string; eventId: string; deviceRegistrationId: string; nonce: string; counter: bigint; signature: string; signedPayload: string }[] = [];
-  events: (CreatedEvent & { envelopeId: string; applicationId: string })[] = [];
+  envelopes: { id: string; eventId: string; deviceRegistrationId: string; nonce: string; counter: bigint; signature: string; signedPayload: string; payloadRedacted: boolean }[] = [];
+  events: (CreatedEvent & { envelopeId: string; applicationId: string; location: StoredLocation | null })[] = [];
 
   addDevice(deviceKeyId: string, record: Omit<DeviceKeyRecord, "lastCounter"> & { lastCounter?: bigint }) {
     this.devices.set(deviceKeyId, { lastCounter: 0n, ...record });
@@ -56,6 +57,7 @@ export class MemoryEnvelopeRepository implements EnvelopeRepository {
       counter,
       signature: input.envelope.signature,
       signedPayload: input.signedPayload,
+      payloadRedacted: input.payloadRedacted,
     });
     const created = input.events.map((e, i) => ({
       id: `${envelopeId}-ev-${i}`,
@@ -68,6 +70,7 @@ export class MemoryEnvelopeRepository implements EnvelopeRepository {
       evidence: e.evidence,
       envelopeId,
       applicationId: device.applicationId,
+      location: e.location,
     }));
     this.events.push(...created);
     return { outcome: "stored", events: created };

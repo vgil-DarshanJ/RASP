@@ -7,6 +7,13 @@ import { deviceRateLimiter } from "../redis/deviceRateLimit";
 import { maybeTriggerWebhook } from "../webhooks/dispatch";
 import { isEnvelopeBody, processEnvelope } from "./envelope";
 import { prismaEnvelopeRepository } from "./envelopeRepository";
+import { extractLocation, locationColumns } from "./location";
+import { raiseTamperAlerts } from "./tamperAlerts";
+
+/** Runs after the response: never affects the stored events or the status sent. */
+function raiseTamperAlertsInBackground(args: Parameters<typeof raiseTamperAlerts>[0]) {
+  void raiseTamperAlerts(args).catch((err) => console.error("[tamperAlerts] failed (non-fatal):", err));
+}
 
 export const ingestionRouter = Router();
 
@@ -107,6 +114,14 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
 
     res.status(outcome.status).json(outcome.body);
 
+    raiseTamperAlertsInBackground({
+      applicationId,
+      events: created,
+      deviceSigningCertSha256: outcome.deviceSigningCertSha256,
+      ipAddress,
+      now: new Date(),
+    });
+
     const detected = created.filter((row) => row.status === "DETECTED");
     if (detected.length > 0) {
       const app = await prisma.application.findUnique({
@@ -144,13 +159,16 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
   }
 
   const created = await prisma.$transaction(
-    parsed.data.events.map((event) =>
-      prisma.securityEvent.create({
+    parsed.data.events.map((event) => {
+      // Location only with location_opt_in === true; otherwise stripped from the evidence.
+      const location = extractLocation(event.evidence);
+      return prisma.securityEvent.create({
         data: {
           applicationId,
           detectorId: event.detectorId,
           status: event.status,
-          evidence: event.evidence as any,
+          evidence: location.evidence as any,
+          ...locationColumns(location.location),
           reason: event.reason,
           deviceId: event.deviceId,
           deviceModel: event.deviceModel,
@@ -162,8 +180,8 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
           clientObservedAt: event.observedAt ? new Date(event.observedAt) : undefined,
           ipAddress,
         },
-      })
-    ),
+      });
+    }),
   );
 
   await Promise.all(
@@ -178,6 +196,8 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
   );
 
   res.status(201).json({ accepted: created.length });
+
+  raiseTamperAlertsInBackground({ applicationId, events: created, ipAddress, now: new Date() });
 
   const detected = created.filter((row) => row.status === "DETECTED");
   if (detected.length > 0) {
