@@ -4,9 +4,13 @@ import { prisma } from "../db/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { getDetectorCountsFromCache, getRecentEventsFromCache } from "../redis/dashboardCache";
 import { contributingDetectors, riskLevelForScore, scoreForLatestStatuses } from "../detectors/severity";
+import { mapPointsHandler } from "./mapPoints";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
+
+/** Map of devices that shared their location — see mapPoints.ts. */
+dashboardRouter.get("/map-points", mapPointsHandler());
 
 /** `archivedAt: null` hides every dashboard view (devices, events, risk
  *  scores, geography, exports…) for an archived application without
@@ -137,7 +141,7 @@ dashboardRouter.get("/applications/:applicationId/devices", async (req: AuthedRe
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 
-  const [latest, counters, latestPerDetector] = await Promise.all([
+  const [latest, counters, latestPerDetector, sharedLocation] = await Promise.all([
     prisma.$queryRaw<
       {
         deviceId: string;
@@ -178,9 +182,16 @@ dashboardRouter.get("/applications/:applicationId/devices", async (req: AuthedRe
       WHERE "applicationId" = ${app.id} AND "deviceId" IS NOT NULL
       ORDER BY "deviceId", "detectorId", "receivedAt" DESC
     `,
+    // Devices that have shared their location at least once (opted in).
+    prisma.$queryRaw<{ deviceId: string }[]>`
+      SELECT DISTINCT "deviceId"
+      FROM security_events
+      WHERE "applicationId" = ${app.id} AND "deviceId" IS NOT NULL AND "locationOptIn" = true
+    `,
   ]);
 
   const counterByDevice = new Map(counters.map((c) => [c.deviceId, c]));
+  const locationSharedBy = new Set(sharedLocation.map((r) => r.deviceId));
   const statusesByDevice = new Map<string, Record<string, string>>();
   for (const row of latestPerDetector) {
     const bucket = statusesByDevice.get(row.deviceId) ?? {};
@@ -209,6 +220,8 @@ dashboardRouter.get("/applications/:applicationId/devices", async (req: AuthedRe
         riskScore,
         riskLevel: riskLevelForScore(riskScore),
         riskDetectors: contributingDetectors(latestStatuses).map((d) => d.detectorId),
+        /** false → the UI shows "location not shared"; the device is never on the map. */
+        locationShared: locationSharedBy.has(row.deviceId),
       };
     })
     .sort((a, b) => b.riskScore - a.riskScore || b.lastSeen.localeCompare(a.lastSeen));
@@ -290,13 +303,11 @@ dashboardRouter.get("/applications/:applicationId/risk-summary", async (req: Aut
 });
 
 /**
- * Threat geolocation feed for a map/list view — parses `latitude`/
- * `longitude` out of each DETECTED event's free-form `evidence` JSON
- * (populated only when the host app supplied a location snapshot to the
- * SDK; see `RaspLeanSession.currentLocation`/`RaspLocationSnapshot` — the
- * SDK itself never fetches GPS, so a location-less deployment simply
- * yields an empty list here, not an error). No schema change: `evidence`
- * was already a free-form JSON column before this endpoint existed.
+ * Threat geolocation feed for a map/list view — DETECTED events whose
+ * location was shared with opt-in (`locationOptIn`, stored columns; see
+ * ingestion/location.ts). Coordinates that older SDKs put into the evidence
+ * without opt-in are deliberately NOT read here, so a device that did not
+ * opt in never appears on a map.
  */
 dashboardRouter.get("/applications/:applicationId/geography", async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
@@ -306,42 +317,27 @@ dashboardRouter.get("/applications/:applicationId/geography", async (req: Authed
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   const events = await prisma.securityEvent.findMany({
-    where: { applicationId: app.id, status: "DETECTED", receivedAt: { gte: since } },
-    select: { id: true, detectorId: true, deviceId: true, receivedAt: true, evidence: true },
+    where: {
+      applicationId: app.id,
+      status: "DETECTED",
+      receivedAt: { gte: since },
+      locationOptIn: true,
+      latitude: { not: null },
+      longitude: { not: null },
+    },
+    select: { id: true, detectorId: true, deviceId: true, receivedAt: true, latitude: true, longitude: true },
     orderBy: { receivedAt: "desc" },
     take: 2000,
   });
 
-  const points: Array<{
-    eventId: string;
-    detectorId: string;
-    deviceId: string | null;
-    receivedAt: string;
-    latitude: number;
-    longitude: number;
-  }> = [];
-
-  for (const event of events) {
-    if (!Array.isArray(event.evidence)) continue;
-    let lat: number | undefined;
-    let lng: number | undefined;
-    for (const item of event.evidence as unknown[]) {
-      if (!item || typeof item !== "object") continue;
-      const entry = item as { key?: unknown; value?: unknown };
-      if (entry.key === "latitude" && typeof entry.value === "number") lat = entry.value;
-      if (entry.key === "longitude" && typeof entry.value === "number") lng = entry.value;
-    }
-    if (lat !== undefined && lng !== undefined) {
-      points.push({
-        eventId: event.id,
-        detectorId: event.detectorId,
-        deviceId: event.deviceId,
-        receivedAt: event.receivedAt.toISOString(),
-        latitude: lat,
-        longitude: lng,
-      });
-    }
-  }
+  const points = events.map((event) => ({
+    eventId: event.id,
+    detectorId: event.detectorId,
+    deviceId: event.deviceId,
+    receivedAt: event.receivedAt.toISOString(),
+    latitude: event.latitude as number,
+    longitude: event.longitude as number,
+  }));
 
   res.json({ points });
 });

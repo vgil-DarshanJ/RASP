@@ -10,7 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "test": "tsx --test \"test/**/*.test.ts\""
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "seed:map-points": "tsx scripts/seed-map-points.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
