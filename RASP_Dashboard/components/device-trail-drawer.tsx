@@ -6,6 +6,95 @@ import { Badge, CategoryChip, PlatformIcon, XIcon, statusTone } from "@/componen
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor, type AlertCategory } from "@/lib/alertCatalog";
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
 
+/** The latest `high_risk_ip` result for a device, as the SDK reports it. */
+interface IpRiskResult {
+  status: string;
+  country: string | null;
+  riskLevel: string | null;
+  reasons: string[];
+  reason: string | null;
+  at: string;
+}
+
+function evidenceValue(event: SecurityEvent, key: string): unknown {
+  return Array.isArray(event.evidence) ? event.evidence.find((e) => e.key === key)?.value : undefined;
+}
+
+function toIpRiskResult(event: SecurityEvent): IpRiskResult {
+  const country = evidenceValue(event, "country");
+  const riskLevel = evidenceValue(event, "risk_level");
+  const reasons = evidenceValue(event, "reasons");
+  return {
+    status: event.status,
+    country: typeof country === "string" ? country : null,
+    riskLevel: typeof riskLevel === "string" ? riskLevel : null,
+    reasons: Array.isArray(reasons)
+      ? reasons.map(String)
+      : typeof reasons === "string" && reasons.trim() !== ""
+        ? reasons.split(",").map((r) => r.trim())
+        : [],
+    reason: event.reason,
+    at: event.receivedAt,
+  };
+}
+
+/**
+ * The device's latest IP risk check (`high_risk_ip`): status, country, risk
+ * level, the rules behind it, and when. Read from the device's own events;
+ * live-polled like the rest of the drawer.
+ */
+function IpRiskCard({ applicationId, deviceId, now }: { applicationId: string; deviceId: string; now: number }) {
+  const [result, setResult] = useState<IpRiskResult | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const params = new URLSearchParams({ deviceId, detectorId: "high_risk_ip", limit: "1" });
+      try {
+        const res = await apiFetch<{ events: SecurityEvent[] }>(
+          `/v1/dashboard/applications/${applicationId}/events?${params.toString()}`,
+        );
+        if (!cancelled) setResult(res.events[0] ? toIpRiskResult(res.events[0]) : null);
+      } catch {
+        if (!cancelled) setResult(null);
+      }
+    }
+    load();
+    const interval = setInterval(load, LIVE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [applicationId, deviceId]);
+
+  const levelTone = (level: string | null) =>
+    level === "high" ? "text-red-600" : level === "medium" ? "text-amber-700" : level === "low" ? "text-emerald-700" : "text-ink-500";
+
+  return (
+    <div className="border-b border-ink-100 px-5 py-3">
+      <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-400">IP risk</div>
+      {result === undefined ? (
+        <div className="h-10 animate-pulse rounded-lg bg-ink-100" />
+      ) : result === null ? (
+        <p className="text-xs text-ink-400">No IP risk result yet</p>
+      ) : (
+        <div className="space-y-1 text-xs">
+          <div className="flex items-center gap-2">
+            <Badge tone={statusTone(result.status)}>{result.status}</Badge>
+            <span className="font-medium text-ink-800">{result.country ?? "country unknown"}</span>
+            {result.riskLevel && <span className={`font-semibold ${levelTone(result.riskLevel)}`}>{result.riskLevel} risk</span>}
+          </div>
+          {result.reasons.length > 0 && (
+            <div className="text-ink-600">Reasons: {result.reasons.join(", ")}</div>
+          )}
+          {result.reason && <div className="text-ink-500">{result.reason}</div>}
+          <div className="text-ink-400" title={new Date(result.at).toLocaleString()}>{relativeTime(result.at, now)}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface DeviceSummary {
   deviceId: string;
   deviceModel: string | null;
@@ -210,6 +299,8 @@ export function DeviceTrailDrawer({
               Live — <span title={new Date(device.lastSeen).toLocaleString()}>{relativeTime(device.lastSeen, now)}</span>
             </div>
           </div>
+
+          <IpRiskCard applicationId={applicationId} deviceId={device.deviceId} now={now} />
 
           <div className="flex flex-wrap items-center gap-1.5 border-b border-ink-100 px-4 py-3">
             <CategoryChip
