@@ -51,7 +51,9 @@ function fakeLookup(countries: Record<string, string>, extra: Partial<GeoInfo> =
     async lookup(ip) {
       calls.push(ip);
       const country = countries[ip];
-      return country ? { country, proxy: null, hosting: null, source: "lookup", ...extra } : null;
+      return country
+        ? { country, region: null, city: null, proxy: null, hosting: null, tor: null, source: "lookup", ...extra }
+        : null;
     },
   };
   return { lookup, calls };
@@ -101,13 +103,21 @@ async function serve(env: NodeJS.ProcessEnv, deps: IpRiskDeps = {}, options: { r
   };
 }
 
-const PRIVATE_LOOPBACK = {
-  country: null,
-  flags: { blocked_country: null, proxy: null, hosting: null, private_address: true },
-  source: "none",
-  reason: "private_address",
-  cached: false,
-};
+/** The full response shape for a country nobody could place (Task 6.0 contract). */
+function unknownCountry(privateAddress: boolean, reason: string) {
+  return {
+    country: null, region: null, city: null,
+    is_proxy: null, is_hosting: null, is_tor: null,
+    risk_level: null, reasons: [],
+    flags: {
+      blocked_country: null, proxy: null, hosting: null, tor: null, private_address: privateAddress,
+      country_not_allowed: null, country_changed: null,
+    },
+    source: "none", reason, cached: false,
+  };
+}
+
+const PRIVATE_LOOPBACK = unknownCountry(true, "private_address");
 
 describe("client IP and TRUST_PROXY", () => {
   test("TRUST_PROXY unset: X-Forwarded-For is ignored; the loopback peer is a private address", async () => {
@@ -130,11 +140,14 @@ describe("client IP and TRUST_PROXY", () => {
       const r = await s.get({ "X-Forwarded-For": "198.51.100.1, 203.0.113.7" });
       assert.deepEqual(geo.calls, ["203.0.113.7"], "the hop the trusted proxy appended");
       assert.deepEqual(r.body, {
-        country: "IN",
-        flags: { blocked_country: false, proxy: null, hosting: null, private_address: false },
-        source: "lookup",
-        reason: null,
-        cached: false,
+        country: "IN", region: null, city: null,
+        is_proxy: null, is_hosting: null, is_tor: null,
+        risk_level: "low", reasons: [],
+        flags: {
+          blocked_country: false, proxy: null, hosting: null, tor: null, private_address: false,
+          country_not_allowed: false, country_changed: null,
+        },
+        source: "lookup", reason: null, cached: false,
       });
       assert.equal(JSON.stringify(r.body).includes("203.0.113"), false);
     } finally {
@@ -199,8 +212,10 @@ describe("blocked-country decision", () => {
   });
 
   test("provider fields: country_code / countryCode / country; proxy and hosting only as booleans", () => {
-    assert.deepEqual(parseLookupBody({ country_code: "IN", proxy: false }), { country: "IN", proxy: false, hosting: null, source: "lookup" });
-    assert.deepEqual(parseLookupBody({ countryCode: "de", country: "Germany", proxy: true, hosting: true }), { country: "DE", proxy: true, hosting: true, source: "lookup" });
+    assert.deepEqual(parseLookupBody({ country_code: "IN", proxy: false }),
+      { country: "IN", region: null, city: null, proxy: false, hosting: null, tor: null, source: "lookup" });
+    assert.deepEqual(parseLookupBody({ countryCode: "de", country: "Germany", proxy: true, hosting: true }),
+      { country: "DE", region: null, city: null, proxy: true, hosting: true, tor: null, source: "lookup" });
     assert.equal(parseLookupBody({ country: "India" }), null, "not a two-letter code");
     assert.equal(parseLookupBody({ error: true, reason: "RateLimited" }), null);
   });
@@ -213,13 +228,7 @@ describe("lookup and cache", () => {
     try {
       for (let i = 0; i < 2; i++) {
         const r = await s.get({ "X-Forwarded-For": "203.0.113.7" });
-        assert.deepEqual(r.body, {
-          country: null,
-          flags: { blocked_country: null, proxy: null, hosting: null, private_address: false },
-          source: "none",
-          reason: "lookup_failed",
-          cached: false,
-        });
+        assert.deepEqual(r.body, unknownCountry(false, "lookup_failed"));
       }
       assert.equal(geo.calls.length, 2, "looked up again: the failure was not cached");
     } finally {
@@ -306,7 +315,8 @@ describe("lookup and cache", () => {
     const { port } = provider.address() as AddressInfo;
     try {
       const lookup = httpGeoLookup(`http://127.0.0.1:${port}/{ip}/json/`, { timeoutMs: 200 });
-      assert.deepEqual(await lookup.lookup("203.0.113.7"), { country: "IN", proxy: false, hosting: null, source: "lookup" });
+      assert.deepEqual(await lookup.lookup("203.0.113.7"),
+        { country: "IN", region: null, city: null, proxy: false, hosting: null, tor: null, source: "lookup" });
       assert.equal(await lookup.lookup("203.0.113.8"), null, "429 from the provider");
       assert.equal(await lookup.lookup("203.0.113.9"), null, "timed out");
       assert.deepEqual(seen.slice(0, 3), ["/203.0.113.7/json/", "/203.0.113.8/json/", "/203.0.113.9/json/"]);
@@ -363,11 +373,14 @@ describe("development override for private addresses", () => {
     try {
       const r = await s.get();
       assert.deepEqual(r.body, {
-        country: "IN",
-        flags: { blocked_country: true, proxy: null, hosting: null, private_address: true },
-        source: "dev_override",
-        reason: null,
-        cached: false,
+        country: "IN", region: null, city: null,
+        is_proxy: null, is_hosting: null, is_tor: null,
+        risk_level: "high", reasons: ["blocked_country"],
+        flags: {
+          blocked_country: true, proxy: null, hosting: null, tor: null, private_address: true,
+          country_not_allowed: false, country_changed: null,
+        },
+        source: "dev_override", reason: null, cached: false,
       });
     } finally {
       await s.close();

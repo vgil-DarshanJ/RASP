@@ -1,5 +1,6 @@
 import { NextFunction, Request, RequestHandler, Response, Router } from "express";
-import { requireApiKey } from "../middleware/apiKey";
+import { prisma } from "../db/prisma";
+import { ApiKeyedRequest, requireApiKey } from "../middleware/apiKey";
 import type { RateCheck } from "../redis/deviceRateLimit";
 import { checkRateLimit } from "../redis/rateLimit";
 import { redisGeoCache } from "../redis/ipRiskCache";
@@ -8,10 +9,13 @@ import {
   GeoInfo,
   GeoLookup,
   IpRiskConfig,
+  IpRiskPolicy,
   IpRiskReason,
   IpRiskResponse,
   buildIpRiskResponse,
   countryFromTrustedHeader,
+  countryOnly,
+  countrySet,
   httpGeoLookup,
   intFromEnv,
   isPrivateAddress,
@@ -30,7 +34,23 @@ export interface IpRiskDeps {
   geoLookup?: GeoLookup;
   /** Default: Redis (best-effort). */
   cache?: GeoCache;
+  /** The application's own country lists. Default: Prisma (`ipBlockedCountries` / `ipAllowedCountries`). */
+  applicationPolicy?: (applicationId: string) => Promise<{ blocked: string[]; allowed: string[] } | null>;
+  /** First-registration country of a device key within the application. Default: Prisma. */
+  registrationCountry?: (applicationId: string, deviceKeyId: string) => Promise<string | null>;
 }
+
+export const prismaApplicationPolicy = async (applicationId: string) =>
+  prisma.application.findUnique({
+    where: { id: applicationId },
+    select: { ipBlockedCountries: true, ipAllowedCountries: true },
+  }).then((app) => (app ? { blocked: app.ipBlockedCountries, allowed: app.ipAllowedCountries } : null));
+
+export const prismaRegistrationCountry = async (applicationId: string, deviceKeyId: string) =>
+  prisma.deviceRegistration.findUnique({
+    where: { deviceKeyId },
+    select: { applicationId: true, registrationCountry: true },
+  }).then((row) => (row && row.applicationId === applicationId ? row.registrationCountry : null));
 
 /**
  * Per client IP and per API key (same window). GET has no body, so there is
@@ -55,61 +75,98 @@ export function ipRiskRateLimiter(check: RateCheck, env: NodeJS.ProcessEnv): Req
   };
 }
 
-async function assess(req: Request, config: IpRiskConfig, deps: IpRiskDeps): Promise<IpRiskResponse> {
-  const respond = (geo: GeoInfo | null, privateAddress: boolean, reason: IpRiskReason | null, cached = false) =>
-    buildIpRiskResponse(geo, { privateAddress, reason, cached }, config.blockedCountries);
+export interface ResolvedGeo {
+  geo: GeoInfo | null;
+  privateAddress: boolean;
+  reason: IpRiskReason | null;
+  cached: boolean;
+}
+
+/**
+ * Where the request's IP is: the trusted-proxy country header or the HTTP
+ * lookup (cached per IP), per IP_RISK_GEO_SOURCE. Private addresses are
+ * never looked up. Also used by device registration (registration country).
+ */
+export async function resolveGeo(
+  req: Request,
+  config: IpRiskConfig,
+  deps: Pick<IpRiskDeps, "geoLookup" | "cache"> = {},
+): Promise<ResolvedGeo> {
+  const result = (geo: GeoInfo | null, privateAddress: boolean, reason: IpRiskReason | null, cached = false) =>
+    ({ geo, privateAddress, reason, cached });
 
   const ip = normalizeIp(req.ip);
-  if (ip === null) return respond(null, false, "lookup_failed");
+  if (ip === null) return result(null, false, "lookup_failed");
 
   if (isPrivateAddress(ip)) {
     // A phone on the developer's LAN reaches the backend from a private
     // address; IP_RISK_DEV_PRIVATE_IP_COUNTRY (never in production) lets
     // that setup exercise the rest of the flow.
     if (config.devPrivateIpCountry) {
-      return respond({ country: config.devPrivateIpCountry, proxy: null, hosting: null, source: "dev_override" }, true, null);
+      return result(countryOnly(config.devPrivateIpCountry, "dev_override"), true, null);
     }
-    return respond(null, true, "private_address");
+    return result(null, true, "private_address");
   }
 
   if (config.geoSource === "header") {
     const country = countryFromTrustedHeader(req, config.countryHeader);
-    return country
-      ? respond({ country, proxy: null, hosting: null, source: "header" }, false, null)
-      : respond(null, false, "no_geo_source");
+    return country ? result(countryOnly(country, "header"), false, null) : result(null, false, "no_geo_source");
   }
 
   if (config.geoSource === "lookup") {
     const cache = deps.cache ?? redisGeoCache;
     const hit = config.cacheSeconds > 0 ? await cache.get(ip) : null;
-    if (hit) return respond(hit, false, null, true);
+    if (hit) return result(hit, false, null, true);
 
     const lookup = deps.geoLookup ?? (config.lookupUrl ? httpGeoLookup(config.lookupUrl) : null);
-    if (!lookup) return respond(null, false, "no_geo_source");
+    if (!lookup) return result(null, false, "no_geo_source");
     const info = await lookup.lookup(ip).catch(() => null);
-    if (!info) return respond(null, false, "lookup_failed"); // failures are not cached
+    if (!info) return result(null, false, "lookup_failed"); // failures are not cached
     if (config.cacheSeconds > 0) await cache.set(ip, info, config.cacheSeconds);
-    return respond(info, false, null);
+    return result(info, false, null);
   }
 
-  return respond(null, false, "no_geo_source");
+  return result(null, false, "no_geo_source");
+}
+
+/** The application's lists (its own blocked list, else the env default) and the device's registration country. */
+async function policyFor(req: ApiKeyedRequest, config: IpRiskConfig, deps: IpRiskDeps): Promise<IpRiskPolicy> {
+  const applicationId = req.applicationId;
+  if (!applicationId) return { blockedCountries: config.blockedCountries };
+  const lists = await (deps.applicationPolicy ?? prismaApplicationPolicy)(applicationId).catch(() => null);
+  const ownBlocked = countrySet(lists?.blocked ?? []);
+  const deviceKeyId = req.header("X-Device-Key-Id")?.trim().slice(0, 200);
+  const registrationCountry = deviceKeyId
+    ? await (deps.registrationCountry ?? prismaRegistrationCountry)(applicationId, deviceKeyId).catch(() => null)
+    : null;
+  return {
+    blockedCountries: ownBlocked.size > 0 ? ownBlocked : config.blockedCountries,
+    allowedCountries: countrySet(lists?.allowed ?? []),
+    registrationCountry,
+  };
 }
 
 /**
  * GET /v1/ip-risk — the caller's country (from its IP, honoring TRUST_PROXY
- * through req.ip) and risk flags, for the SDK's `high_risk_ip` detector:
+ * through req.ip), coarse region/city, risk flags, a risk level and the
+ * rules behind it, for the SDK's `high_risk_ip` detector:
  *
- *   { "country": "IN" | null,
- *     "flags": { "blocked_country": bool|null, "proxy": bool|null,
- *                "hosting": bool|null, "private_address": bool },
- *     "source": "lookup" | "header" | "dev_override" | "none",
- *     "reason": null | "private_address" | "no_geo_source" | "lookup_failed",
+ *   { "country": "IN"|null, "region": str|null, "city": str|null,
+ *     "is_proxy": bool|null, "is_hosting": bool|null, "is_tor": bool|null,
+ *     "risk_level": "low"|"medium"|"high"|null,
+ *     "reasons": ["blocked_country"|"country_not_allowed"|"tor"|"proxy"|"hosting"|"country_changed"],
+ *     "flags": { "blocked_country", "proxy", "hosting", "tor", "private_address",
+ *                "country_not_allowed", "country_changed" },
+ *     "source": "lookup"|"header"|"dev_override"|"none",
+ *     "reason": null|"private_address"|"no_geo_source"|"lookup_failed",
  *     "cached": bool }
  *
  * Order: rate limit (IP, API key) → requireApiKey (HMAC over "<ts>." + the
- * empty body) → lookup. `country: null` always comes with a `reason`; the
+ * empty body) → lookup. `X-Device-Key-Id` (optional) selects the device
+ * whose first-registration country `country_changed` compares against.
+ * `country: null` always comes with a `reason` and `risk_level: null`; the
  * SDK reports that as "cannot decide", never as clean. Config: see the
- * IP_RISK_* section of .env.example.
+ * IP_RISK_* section of .env.example; per-application lists via PATCH /v1/apps/:id.
  */
 export function createIpRiskRouter(deps: IpRiskDeps = {}): Router {
   const env = deps.env ?? process.env;
@@ -118,8 +175,14 @@ export function createIpRiskRouter(deps: IpRiskDeps = {}): Router {
     "/",
     ipRiskRateLimiter(deps.rateCheck ?? checkRateLimit, env),
     deps.authenticate ?? (requireApiKey as RequestHandler),
-    async (req: Request, res: Response) => {
-      const body = await assess(req, loadIpRiskConfig(env), deps);
+    async (req: ApiKeyedRequest, res: Response) => {
+      const config = loadIpRiskConfig(env);
+      const [resolved, policy] = await Promise.all([resolveGeo(req, config, deps), policyFor(req, config, deps)]);
+      const body: IpRiskResponse = buildIpRiskResponse(
+        resolved.geo,
+        { privateAddress: resolved.privateAddress, reason: resolved.reason, cached: resolved.cached },
+        policy,
+      );
       res.setHeader("Cache-Control", "no-store");
       res.json(body);
     },
