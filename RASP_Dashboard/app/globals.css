@@ -339,3 +339,10 @@ body {
     animation: none;
   }
 }
+
+/* Device map (components/device-map.tsx): in dark mode, invert and dim the
+   OpenStreetMap tiles so roads and labels stay readable on a dark page.
+   Markers, clusters and popups are not filtered. */
+.device-map-dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+}

@@ -7,6 +7,7 @@ import {
   Badge,
   Card,
   ClockIcon,
+  MapPinIcon,
   PlatformIcon,
   RiskBadge,
   SmartphoneIcon,
@@ -45,6 +46,8 @@ interface Device {
   riskScore: number;
   riskLevel: string;
   riskDetectors: string[];
+  /** The device opted in to sharing its location at least once (it can appear on the Device Map). */
+  locationShared?: boolean;
 }
 
 /**
@@ -150,6 +153,7 @@ export default function DevicesPage() {
                   <th className="py-2.5 pr-4 font-medium">Risk</th>
                   <th className="py-2.5 pr-4 font-medium">Events</th>
                   <th className="py-2.5 pr-4 font-medium">Threats</th>
+                  <th className="py-2.5 pr-4 font-medium">Location</th>
                   <th className="py-2.5 pr-5 font-medium">
                     <span className="inline-flex items-center gap-1.5">
                       <ClockIcon size={12} /> Last seen
@@ -197,6 +201,19 @@ export default function DevicesPage() {
                         </span>
                       ) : (
                         <span className="text-ink-400">0</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      {d.locationShared ? (
+                        <a
+                          href="/map"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
+                        >
+                          <MapPinIcon size={12} /> Shared
+                        </a>
+                      ) : (
+                        <span className="text-xs text-ink-400">location not shared</span>
                       )}
                     </td>
                     <td className="py-2.5 pr-5 text-ink-500" title={new Date(d.lastSeen).toLocaleString()}>

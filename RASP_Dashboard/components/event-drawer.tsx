@@ -27,14 +27,12 @@ export interface SecurityEvent {
   application?: { id: string; name: string; platform: string };
 }
 
-/** Location rides in `evidence` (keys `latitude`/`longitude`/
- *  `location_accuracy_m`) rather than as dedicated event columns — see
- *  `RaspLeanConfig.captureLocationOnDetection`'s doc in the SDK: this
- *  needed zero backend schema change to start working. Returns `null`
- *  when an event has no location evidence, which is the common case (only
- *  DETECTED events with a registered LocationProvider carry it). */
+/** The event's location, only when the user opted in to sharing it
+ *  (`location_opt_in: true` in the evidence; the backend stores no
+ *  coordinates otherwise). Shown rounded to 3 decimals. `null` = not shared. */
 function extractLocation(evidence: EvidenceEntry[] | null | undefined) {
   if (!evidence) return null;
+  if (evidence.find((e) => e.key === "location_opt_in")?.value !== true) return null;
   const lat = evidence.find((e) => e.key === "latitude")?.value;
   const lng = evidence.find((e) => e.key === "longitude")?.value;
   const accuracy = evidence.find((e) => e.key === "location_accuracy_m")?.value;
@@ -81,22 +79,24 @@ export function EventDetailDrawer({ event, onClose }: { event: SecurityEvent; on
             <Row label="App version" value={event.appVersion ?? "—"} />
             <Row label="SDK version" value={event.sdkVersion ?? "—"} />
             <Row label="Received at (server)" value={new Date(event.receivedAt).toLocaleString()} />
-            {location && (
+            {location ? (
               <Row
                 label="Location"
                 value={
                   <a
-                    href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+                    href={`https://www.google.com/maps?q=${location.lat.toFixed(3)},${location.lng.toFixed(3)}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-brand-700 hover:underline"
                   >
                     <MapPinIcon size={13} />
-                    {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+                    {location.lat.toFixed(3)}, {location.lng.toFixed(3)}
                     {location.accuracy != null && ` (±${Math.round(location.accuracy)}m)`}
                   </a>
                 }
               />
+            ) : (
+              <Row label="Location" value={<span className="text-ink-400">location not shared</span>} />
             )}
           </dl>
         </div>
