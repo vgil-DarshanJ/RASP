@@ -5,6 +5,7 @@ import { apiFetch } from "@/lib/api-client";
 import { Badge, CategoryChip, PlatformIcon, XIcon, statusTone } from "@/components/ui";
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor, type AlertCategory } from "@/lib/alertCatalog";
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
+import { DeviceRiskCard } from "@/components/risk-events";
 
 /** The latest `high_risk_ip` result for a device, as the SDK reports it. */
 interface IpRiskResult {
@@ -301,6 +302,7 @@ export function DeviceTrailDrawer({
           </div>
 
           <IpRiskCard applicationId={applicationId} deviceId={device.deviceId} now={now} />
+          <DeviceRiskCard applicationId={applicationId} deviceId={device.deviceId} />
 
           <div className="flex flex-wrap items-center gap-1.5 border-b border-ink-100 px-4 py-3">
             <CategoryChip

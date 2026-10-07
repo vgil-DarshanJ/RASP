@@ -15,6 +15,7 @@ import {
   BookOpenIcon,
   KeyIcon,
   LayersIcon,
+  LockIcon,
   LogOutIcon,
   MapPinIcon,
   PageLoader,
@@ -33,7 +34,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
  *  Logs/Integration Guide are org-wide or platform-scoped, not scoped to
  *  one application. Kept as a literal list (not inferred from the nav)
  *  so a page choosing to opt in/out is an explicit, one-line decision. */
-const APP_SCOPED_ROUTES = ["/dashboard", "/analytics", "/devices", "/threats", "/activations", "/alerting"];
+const APP_SCOPED_ROUTES = ["/dashboard", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings"];
 
 function AppPickerBar() {
   const pathname = usePathname();
@@ -101,6 +102,7 @@ const NAV_GROUPS: { label: string | null; items: { href: string; label: string; 
     label: "PLATFORM",
     items: [
       { href: "/alerting", label: "Alerting", icon: BellIcon },
+      { href: "/security-settings", label: "Security Settings", icon: LockIcon },
       { href: "/guide", label: "Integration Guide", icon: BookOpenIcon },
     ],
   },

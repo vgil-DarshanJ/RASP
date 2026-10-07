@@ -47,6 +47,8 @@ interface IssuedCredential {
   platform: Platform;
   api_key: string;
   api_secret: string;
+  /** Key for the SDK's account/session/beneficiary hashes; same for every credential of the app. */
+  account_hash_salt: string;
   ingestion_url: string;
   sdk_min_version: string | null;
   issued_at: string;

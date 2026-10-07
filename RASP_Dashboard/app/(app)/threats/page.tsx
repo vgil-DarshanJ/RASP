@@ -15,6 +15,7 @@ import {
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor } from "@/lib/alertCatalog";
 import { useAppSelection } from "@/lib/app-selection";
+import { RiskEventsCard } from "@/components/risk-events";
 
 /** Live feed of real `DETECTED` events — `GET .../events?status=DETECTED`,
  *  the same endpoint the Dashboard's filter dropdown already uses, just
@@ -102,6 +103,8 @@ export default function ThreatsPage() {
         <StatCard label="Devices affected" value={stats.uniqueDevices} icon={<SmartphoneIcon size={18} />} tone="slate" />
         <StatCard label="Most common threat" value={<span className="font-mono text-base">{stats.topDetector}</span>} icon={<AlertTriangleIcon size={18} />} tone="slate" />
       </div>
+
+      {selectedAppId && <RiskEventsCard applicationId={selectedAppId} />}
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-5 py-3">
