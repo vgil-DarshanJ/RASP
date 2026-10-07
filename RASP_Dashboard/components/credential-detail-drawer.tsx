@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { ApiError, apiFetch } from "@/lib/api-client";
-import { getStoredUser } from "@/lib/auth";
 import {
   Badge,
   Button,
@@ -20,7 +18,16 @@ export interface CredentialDetail {
   createdAt: string;
   rotatedAt: string | null;
   revokedAt: string | null;
-  application: { id: string; name: string; platform: string; deviceCount: number };
+  /** First characters of the API secret ("abcd…"); the full secret was shown once at issuance. */
+  apiSecretMasked: string | null;
+  application: {
+    id: string;
+    name: string;
+    platform: string;
+    deviceCount: number;
+    /** First characters of the account-hash salt ("abcd…"). */
+    accountHashSaltMasked: string | null;
+  };
 }
 
 /** `min-w-0` is load-bearing here, not decoration — a grid item defaults
@@ -52,9 +59,9 @@ function Field({ label, value, mono = false }: { label: string; value: React.Rea
  * into an app and wonders why shipping still fails.
  *
  * The account-hash salt (key for the SDK's account/session/beneficiary
- * hashes) is not in the list payload: an OWNER/ADMIN fetches it on demand
- * from its own endpoint (each reveal is audited) and it is then included in
- * the copied / downloaded config.
+ * hashes) is the same: it is in the credential JSON downloaded at issuance
+ * and nowhere else. This drawer shows only the masked prefixes of both, so
+ * a user can tell which file belongs to this credential.
  */
 export function CredentialDetailDrawer({
   credential,
@@ -82,11 +89,6 @@ export function CredentialDetailDrawer({
   deleting: boolean;
 }) {
   const [justCopied, setJustCopied] = useState(false);
-  const [salt, setSalt] = useState<string | null>(null);
-  const [saltLoading, setSaltLoading] = useState(false);
-  const [saltError, setSaltError] = useState<string | null>(null);
-  const role = getStoredUser()?.role;
-  const canRevealSalt = role === "OWNER" || role === "ADMIN";
 
   const configJson = JSON.stringify(
     {
@@ -96,34 +98,12 @@ export function CredentialDetailDrawer({
       platform: credential.application.platform,
       api_key: credential.apiKey,
       ingestion_url: ingestionUrl,
-      ...(salt ? { account_hash_salt: salt } : {}),
       note:
-        "api_secret was shown once at issuance and cannot be recovered from here — issue a new credential (rotate) if it was lost.",
+        "api_secret and account_hash_salt were shown once, in the credential JSON downloaded at issuance, and cannot be recovered from here — issue a new credential (rotate) if it was lost.",
     },
     null,
     2,
   );
-
-  async function loadSalt() {
-    setSaltLoading(true);
-    setSaltError(null);
-    try {
-      const res = await apiFetch<{ account_hash_salt: string }>(
-        `/v1/credentials/applications/${credential.application.id}/account-hash-salt`,
-      );
-      setSalt(res.account_hash_salt);
-    } catch (err) {
-      setSaltError(
-        err instanceof ApiError && err.status === 403
-          ? "Only owners and admins can view the account-hash salt."
-          : err instanceof ApiError && err.status === 429
-            ? "Too many requests — try again in a minute."
-            : "Could not load the account-hash salt.",
-      );
-    } finally {
-      setSaltLoading(false);
-    }
-  }
 
   function downloadConfig() {
     const blob = new Blob([configJson], { type: "application/json" });
@@ -203,18 +183,6 @@ export function CredentialDetailDrawer({
                 </Button>
               </div>
             </div>
-            {!salt && (
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-                {canRevealSalt ? (
-                  <Button size="sm" variant="ghost" loading={saltLoading} onClick={loadSalt}>
-                    <KeyIcon size={12} /> Include account-hash salt
-                  </Button>
-                ) : (
-                  <span>The account-hash salt is shown to owners and admins only.</span>
-                )}
-                {saltError && <span className="text-red-600">{saltError}</span>}
-              </div>
-            )}
             <pre className="overflow-x-auto rounded-xl bg-ink-950 p-4 font-mono text-[11px] leading-relaxed text-ink-100 ring-1 ring-white/5">
               {configJson}
             </pre>
@@ -222,6 +190,8 @@ export function CredentialDetailDrawer({
 
           <dl className="grid grid-cols-2 gap-x-6 gap-y-5">
             <Field label="API key" value={credential.apiKey} mono />
+            <Field label="API secret" value={credential.apiSecretMasked ?? "—"} mono />
+            <Field label="Account-hash salt" value={credential.application.accountHashSaltMasked ?? "—"} mono />
             <Field label="Platform" value={credential.application.platform} />
             <Field label="Issued" value={new Date(credential.createdAt).toLocaleString()} />
             <Field
