@@ -18,6 +18,7 @@ import { devicesRouter } from "./devices/routes";
 import { dashboardRouter } from "./dashboard/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { ipRiskRouter } from "./ipRisk/routes";
+import { riskRouter } from "./risk/routes";
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 
 export function createApp() {
@@ -28,6 +29,10 @@ export function createApp() {
 
   const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000").split(",");
   app.use(cors({ origin: allowedOrigins, credentials: true }));
+
+  // Risk events: own 16 KB JSON parser (413 above it), so mounted before the
+  // app-wide 1 MB parser below — see risk/routes.ts.
+  app.use("/v1/risk", riskRouter);
 
   // JSON body + exact raw bytes for HMAC verification — see requestSetup.ts.
   app.use(jsonBodyParser());

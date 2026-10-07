@@ -84,6 +84,21 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   // Task 3c — attested device state, known malware
   device_state_attestation: "high",
   malware_reputation: "critical",
+
+  // Task 8.1 — OTP / remote-control / screen-sharing signals (SDK)
+  otp_interception_risk: "high",
+  sms_reader_abuse: "high",
+  otp_forwarding_risk: "medium",
+  remote_control_app: "high",
+  screen_sharing_risk: "high",
+
+  // Task 8.1 — fraud-risk rules raised by the backend (risk/rules.ts)
+  new_device_for_account: "medium",
+  device_change_velocity: "high",
+  concurrent_sessions: "medium",
+  impossible_travel: "high",
+  transaction_velocity: "high",
+  new_beneficiary: "low",
 };
 
 export function severityOf(detectorId: string): DetectorSeverity {
