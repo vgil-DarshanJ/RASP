@@ -13,6 +13,7 @@ import jwt from "jsonwebtoken";
 import { appsRouter, applySecurityPatch, canEditAppSecurity, parseAppSecurityPatch } from "../src/apps/routes";
 import { prisma } from "../src/db/prisma";
 import { userRateLimit } from "../src/redis/userRateLimit";
+import { authAccounts } from "../src/middleware/auth";
 import { DEFAULT_RISK_RULES } from "../src/risk/rules";
 
 const A = "AB".repeat(32);
@@ -80,6 +81,7 @@ describe("PATCH /v1/apps/:id and GET .../security-settings", () => {
   const original = {
     findFirst: application.findFirst, update: application.update, createMany: audit.createMany,
     transaction: client.$transaction, check: userRateLimit.check, secret: process.env.JWT_SECRET,
+    find: authAccounts.find,
   };
   const updates: unknown[] = [];
   const auditRows: Record<string, unknown>[] = [];
@@ -103,6 +105,8 @@ describe("PATCH /v1/apps/:id and GET .../security-settings", () => {
       return { count: args.data.length };
     };
     client.$transaction = async (ops: Promise<unknown>[]) => Promise.all(ops);
+    // The token's account exists, in the token's organization, with the token's role.
+    authAccounts.find = async (claims) => ({ organizationId: claims.organizationId, role: claims.role });
     userRateLimit.check = async (_key, limit) => {
       rateCount++;
       return { allowed: rateCount <= Math.min(limit, rateLimit), remaining: 0 };
@@ -120,6 +124,7 @@ describe("PATCH /v1/apps/:id and GET .../security-settings", () => {
     audit.createMany = original.createMany;
     client.$transaction = original.transaction;
     userRateLimit.check = original.check;
+    authAccounts.find = original.find;
     if (original.secret === undefined) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = original.secret;
     server.closeAllConnections();

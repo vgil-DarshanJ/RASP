@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import express from "express";
 import jwt from "jsonwebtoken";
-import { requireAuth } from "../src/middleware/auth";
+import { authAccounts, requireAuth } from "../src/middleware/auth";
 import {
   buildMapPoints,
   DetectedEventRow,
@@ -107,8 +107,15 @@ describe("buildMapPoints", () => {
 describe("GET /v1/dashboard/map-points", () => {
   const SECRET = "test-jwt-secret-not-real";
   let originalSecret: string | undefined;
-  before(() => { originalSecret = process.env.JWT_SECRET; process.env.JWT_SECRET = SECRET; });
+  const originalFind = authAccounts.find;
+  // The token's account exists, in the token's organization.
+  before(() => {
+    originalSecret = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = SECRET;
+    authAccounts.find = async (claims) => ({ organizationId: claims.organizationId, role: claims.role });
+  });
   after(() => {
+    authAccounts.find = originalFind;
     if (originalSecret === undefined) delete process.env.JWT_SECRET;
     else process.env.JWT_SECRET = originalSecret;
   });
