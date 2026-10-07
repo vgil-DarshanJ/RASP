@@ -86,6 +86,19 @@ model Application {
   /// default (IP_RISK_BLOCKED_COUNTRIES); empty allowed list = no allow-list.
   ipBlockedCountries String[] @default([])
   ipAllowedCountries String[] @default([])
+  /// Salt the SDK uses to hash account / session / beneficiary ids:
+  /// hex(HMAC-SHA256(key = salt bytes, msg = UTF-8 id)). 64 lowercase hex
+  /// (32 random bytes). Generated at app creation, or lazily when a
+  /// credential is issued for an older app. Returned only in the issued
+  /// credential JSON and the OWNER/ADMIN reveal endpoint; never in lists or logs.
+  accountHashSalt String?
+  /// Per-application thresholds for the fraud-risk rules (src/risk/rules.ts).
+  /// null = defaults. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
+  riskRules      Json?
+  accountDeviceBindings AccountDeviceBinding[]
+  sessionEvents  SessionEvent[]
+  transactionEvents TransactionEvent[]
+  settingsAuditLogs ApplicationSettingsAuditLog[]
 
   @@index([organizationId])
   @@map("applications")
@@ -240,7 +253,12 @@ model DeviceRegistration {
   signingCertSha256  String?
   /// Country (ISO alpha-2) of the registration request IP; null if unknown or private.
   registrationCountry String?
+  /// Highest monotonic counter accepted on POST /v1/risk/events (its own
+  /// stream, separate from `lastCounter` of evidence envelopes).
+  lastRiskCounter    BigInt   @default(0)
   envelopes          EvidenceEnvelope[]
+  sessionEvents      SessionEvent[]
+  transactionEvents  TransactionEvent[]
 
   @@index([applicationId, deviceId])
   @@map("device_registrations")
@@ -300,4 +318,120 @@ model WebhookConfig {
   lastError       String?
 
   @@map("webhook_configs")
+}
+
+/// Which device keys an account has used in an application. Hashes only
+/// (HMAC with the app's `accountHashSalt`); no account id, name or number.
+model AccountDeviceBinding {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  accountHash          String      // 64 lowercase hex
+  deviceKeyId          String
+  deviceRegistrationId String
+  firstSeenAt          DateTime    @default(now())
+  lastSeenAt           DateTime    @default(now())
+
+  @@unique([applicationId, accountHash, deviceKeyId])
+  @@index([applicationId, accountHash, firstSeenAt])
+  @@index([applicationId, deviceKeyId])
+  @@map("account_device_bindings")
+}
+
+/// One accepted session risk event (POST /v1/risk/events, type "session").
+/// Hashes only. Location is coarse (2 decimals, ~1 km) and present only
+/// when the user opted in; `ipCountry` is the request IP's country if known.
+model SessionEvent {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  deviceKeyId          String
+  eventId              String
+  nonce                String
+  monotonicCounter     BigInt
+  sdkVersion           String
+  accountHash          String
+  sessionHash          String
+  /// login | resume | logout
+  sessionEvent         String
+  riskScore            Int?
+  /// LOW | MEDIUM | HIGH | UNKNOWN — as the SDK reported it.
+  riskVerdict          String
+  latitude             Float?
+  longitude            Float?
+  locationCapturedAt   DateTime?
+  ipCountry            String?
+  eventTime            DateTime    // device clock
+  receivedAt           DateTime    @default(now())
+  signature            String
+  /// Rules that fired for this event: [{ rule, severity, explanation, evidence }].
+  riskEvents           Json        @default("[]")
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, eventId])
+  @@index([applicationId, accountHash, eventTime])
+  @@index([applicationId, deviceKeyId, receivedAt])
+  @@index([applicationId, receivedAt])
+  @@map("session_events")
+}
+
+/// One accepted transaction risk event (type "transaction"). Never an amount.
+model TransactionEvent {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  deviceKeyId          String
+  eventId              String
+  nonce                String
+  monotonicCounter     BigInt
+  sdkVersion           String
+  accountHash          String
+  sessionHash          String
+  beneficiaryHash      String
+  currency             String
+  channel              String
+  bindingSha256        String
+  riskScore            Int?
+  riskVerdict          String
+  latitude             Float?
+  longitude            Float?
+  locationCapturedAt   DateTime?
+  ipCountry            String?
+  eventTime            DateTime
+  receivedAt           DateTime    @default(now())
+  signature            String
+  riskEvents           Json        @default("[]")
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, eventId])
+  @@index([applicationId, accountHash, eventTime])
+  @@index([applicationId, accountHash, beneficiaryHash])
+  @@index([applicationId, deviceKeyId, receivedAt])
+  @@index([applicationId, receivedAt])
+  @@map("transaction_events")
+}
+
+/// Append-only audit trail for application settings: who changed which
+/// field, when, old and new value; also salt generation and reveals
+/// (never the salt itself). `performedByUserId` is a plain id, like
+/// CredentialAuditLog, so a deleted user does not erase history.
+model ApplicationSettingsAuditLog {
+  id                String      @id @default(cuid())
+  application       Application @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  /// SETTINGS_UPDATED | ACCOUNT_HASH_SALT_GENERATED | ACCOUNT_HASH_SALT_REVEALED
+  action            String
+  field             String?
+  oldValue          Json?
+  newValue          Json?
+  performedByUserId String?
+  performedAt       DateTime    @default(now())
+  ipAddress         String?
+
+  @@index([applicationId, performedAt])
+  @@map("application_settings_audit_logs")
 }
