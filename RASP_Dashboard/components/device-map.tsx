@@ -7,7 +7,16 @@ import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import { catalogFor } from "@/lib/alertCatalog";
-import { roundCoord, SEVERITY_COLOR, type DeviceMapPoint, type MapSeverity } from "@/lib/mapPoints";
+import {
+  markerColor,
+  roundCoord,
+  SEVERITY_COLOR,
+  SEVERITY_LABEL,
+  STALE_COLOR,
+  timeAgo,
+  type DeviceMapPoint,
+  type MapSeverity,
+} from "@/lib/mapPoints";
 
 /**
  * Leaflet's default marker resolves its PNGs from a path guessed at runtime,
@@ -22,7 +31,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow.src,
 });
 
-const SEVERITY_RANK: Record<MapSeverity, number> = { low: 0, medium: 1, high: 2 };
+const SEVERITY_RANK: Record<MapSeverity, number> = { none: -1, low: 0, medium: 1, high: 2 };
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -54,18 +63,27 @@ function clusterIcon(count: number, color: string): L.DivIcon {
 }
 
 function popupHtml(p: DeviceMapPoint): string {
+  const now = Date.now();
   const threat = p.lastThreat
     ? `${escapeHtml(catalogFor(p.lastThreat.detectorId).title)} · ${escapeHtml(new Date(p.lastThreat.at).toLocaleString())}`
     : "No threat in this period";
-  return `<div style="font-size:12px;line-height:1.5;color:#111827;min-width:180px;">
+  const accuracy = p.accuracyM !== null ? ` · ±${Math.round(p.accuracyM)} m` : "";
+  const stale = p.stale
+    ? `<div style="margin-top:4px;color:#6b7280;font-weight:600;">Stale: location ${escapeHtml(timeAgo(p.at, now))}</div>`
+    : "";
+  const mock = p.isMock ? `<div style="color:#b45309;font-weight:600;">Mock location reported by the device</div>` : "";
+  return `<div style="font-size:12px;line-height:1.5;color:#111827;min-width:190px;">
     <div style="display:flex;align-items:center;gap:6px;font-weight:600;">
-      <span style="display:inline-block;width:8px;height:8px;border-radius:9999px;background:${SEVERITY_COLOR[p.severity]}"></span>
+      <span style="display:inline-block;width:8px;height:8px;border-radius:9999px;background:${markerColor(p)}"></span>
       ${escapeHtml(p.applicationName)}
     </div>
     <div style="font-family:monospace;font-size:11px;color:#4b5563;">Device ${escapeHtml(p.deviceId)}</div>
-    <div style="margin-top:4px;"><span style="color:#6b7280;">Last threat:</span> ${threat}</div>
-    <div style="color:#6b7280;">Location at ${escapeHtml(new Date(p.at).toLocaleString())}</div>
-    <div style="font-family:monospace;font-size:11px;color:#6b7280;">${roundCoord(p.latitude)}, ${roundCoord(p.longitude)}</div>
+    <div style="margin-top:4px;"><span style="color:#6b7280;">Severity:</span> ${escapeHtml(SEVERITY_LABEL[p.severity])}</div>
+    <div><span style="color:#6b7280;">Last threat:</span> ${threat}</div>
+    <div><span style="color:#6b7280;">Last seen:</span> ${escapeHtml(timeAgo(p.lastSeenAt, now))} · ${escapeHtml(new Date(p.lastSeenAt).toLocaleString())}</div>
+    <div style="color:#6b7280;">Location ${p.source === "heartbeat" ? "heartbeat" : "from an event"} at ${escapeHtml(new Date(p.at).toLocaleString())}</div>
+    <div style="font-family:monospace;font-size:11px;color:#6b7280;">${roundCoord(p.latitude)}, ${roundCoord(p.longitude)}${accuracy}</div>
+    ${stale}${mock}
   </div>`;
 }
 
@@ -95,8 +113,10 @@ const DEFAULT_CENTER: [number, number] = [20, 0];
 /**
  * Devices that shared their location, on OpenStreetMap tiles. Driven
  * imperatively from effects (same lifecycle approach as threat-map.tsx).
- * Markers are coloured by severity; nearby markers are clustered with a count
- * (click a cluster to zoom in). Coordinates are shown rounded to 3 decimals.
+ * Markers are coloured by severity (green = no threat in the period) and grey
+ * when the location is stale; nearby markers are clustered with a count
+ * (click a cluster to zoom in). Points that carry a `trail` get a line through
+ * their last shared positions. Coordinates are shown rounded to 3 decimals.
  * `dark` dims and inverts the tiles so the map stays readable in dark mode.
  */
 export function DeviceMap({ points, dark }: { points: DeviceMapPoint[]; dark: boolean }) {
@@ -111,19 +131,35 @@ export function DeviceMap({ points, dark }: { points: DeviceMapPoint[]; dark: bo
     const layer = layerRef.current;
     if (!map || !layer) return;
     layer.clearLayers();
+    for (const p of pointsRef.current) {
+      if (!p.trail || p.trail.length === 0) continue;
+      // Trail: the device's last shared points, oldest to newest, ending at its marker.
+      const path = p.trail.map((t) => [t.latitude, t.longitude] as [number, number]);
+      const last = path[path.length - 1];
+      if (last[0] !== p.latitude || last[1] !== p.longitude) path.push([p.latitude, p.longitude]);
+      const color = markerColor(p);
+      L.polyline(path, { color, weight: 3, opacity: 0.7, dashArray: p.stale ? "4 6" : undefined, interactive: false }).addTo(layer);
+      for (const t of p.trail) {
+        L.circleMarker([t.latitude, t.longitude], { radius: 3, color, weight: 1, fillColor: color, fillOpacity: 0.8 })
+          .bindTooltip(`${roundCoord(t.latitude)}, ${roundCoord(t.longitude)} · ${new Date(t.at).toLocaleTimeString()}`)
+          .addTo(layer);
+      }
+    }
     for (const group of clusterPoints(map, pointsRef.current)) {
       if (group.length === 1) {
         const p = group[0];
-        L.marker([p.latitude, p.longitude], { icon: pinIcon(SEVERITY_COLOR[p.severity]) })
+        L.marker([p.latitude, p.longitude], { icon: pinIcon(markerColor(p)) })
           .bindPopup(popupHtml(p))
           .addTo(layer);
         continue;
       }
-      const worst = group.reduce((a, b) => (SEVERITY_RANK[b.severity] > SEVERITY_RANK[a.severity] ? b : a));
+      // Colour of the worst live device; grey only when every device in the group is stale.
+      const live = group.filter((p) => !p.stale);
+      const worst = live.length === 0 ? null : live.reduce((a, b) => (SEVERITY_RANK[b.severity] > SEVERITY_RANK[a.severity] ? b : a));
       const lat = group.reduce((s, p) => s + p.latitude, 0) / group.length;
       const lng = group.reduce((s, p) => s + p.longitude, 0) / group.length;
       const bounds = L.latLngBounds(group.map((p) => [p.latitude, p.longitude] as [number, number]));
-      L.marker([lat, lng], { icon: clusterIcon(group.length, SEVERITY_COLOR[worst.severity]) })
+      L.marker([lat, lng], { icon: clusterIcon(group.length, worst ? SEVERITY_COLOR[worst.severity] : STALE_COLOR) })
         .on("click", () => {
           if (map.getZoom() >= map.getMaxZoom() || bounds.getNorthEast().equals(bounds.getSouthWest())) {
             L.popup().setLatLng([lat, lng]).setContent(group.map(popupHtml).join("<hr style='margin:6px 0'/>")).openOn(map);
