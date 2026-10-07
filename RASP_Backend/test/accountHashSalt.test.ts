@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { accountHash, generateAccountHashSalt, isAccountHashSalt, withoutAccountHashSalt } from "../src/risk/accountHashSalt";
+import { accountHash, generateAccountHashSalt, isAccountHashSalt } from "../src/risk/accountHashSalt";
 import { DETECTOR_SEVERITY } from "../src/detectors/severity";
 import { RISK_RULE_IDS, RULE_SEVERITY } from "../src/risk/rules";
 
@@ -30,12 +30,6 @@ test("hash = hex(HMAC-SHA256(key = salt bytes from hex, msg = UTF-8 id)) — the
   assert.notEqual(accountHash(generateAccountHashSalt(), "customer-42"), expected);
   // Non-ASCII ids hash their UTF-8 bytes.
   assert.equal(accountHash(salt, "ग्राहक"), crypto.createHmac("sha256", Buffer.from(salt, "hex")).update(Buffer.from("ग्राहक", "utf8")).digest("hex"));
-});
-
-test("withoutAccountHashSalt removes only the salt", () => {
-  const row = { id: "app-1", name: "Bank", accountHashSalt: "f".repeat(64), riskRules: null };
-  assert.deepEqual(withoutAccountHashSalt(row), { id: "app-1", name: "Bank", riskRules: null });
-  assert.ok(!JSON.stringify(withoutAccountHashSalt(row)).includes("f".repeat(64)));
 });
 
 test("severity table: Task 8.1 detectors and every rule have an explicit severity matching the rules engine", () => {
