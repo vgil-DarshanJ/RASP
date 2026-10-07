@@ -5,6 +5,9 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { getDetectorCountsFromCache, getRecentEventsFromCache } from "../redis/dashboardCache";
 import { contributingDetectors, riskLevelForScore, scoreForLatestStatuses } from "../detectors/severity";
 import { mapPointsHandler } from "./mapPoints";
+import { deviceRiskHandler, riskEventsHandler } from "./riskEvents";
+import { userRateLimiter } from "../redis/userRateLimit";
+import { withoutAccountHashSalt } from "../risk/accountHashSalt";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -19,6 +22,11 @@ dashboardRouter.get("/map-points", mapPointsHandler());
 async function assertOwnedApplication(applicationId: string, organizationId: string) {
   return prisma.application.findFirst({ where: { id: applicationId, organizationId, archivedAt: null } });
 }
+
+/** Session/transaction risk events (hashes shortened) — see riskEvents.ts. */
+const riskViewsRateLimit = userRateLimiter({ scope: "risk_views", perUser: 240, perIp: 600, windowSeconds: 60 });
+dashboardRouter.get("/applications/:applicationId/risk-events", riskViewsRateLimit, riskEventsHandler(assertOwnedApplication));
+dashboardRouter.get("/applications/:applicationId/device-risk", riskViewsRateLimit, deviceRiskHandler(assertOwnedApplication));
 
 /** "Most common alert type" chart data — tries the Redis rolling-counter
  *  cache first (cheap, recent-hours only), falls back to a real Postgres
@@ -453,7 +461,7 @@ dashboardRouter.get("/search", async (req: AuthedRequest, res) => {
     }),
   ]);
 
-  res.json({ applications, events });
+  res.json({ applications: applications.map(withoutAccountHashSalt), events });
 });
 
 dashboardRouter.get("/applications/:applicationId/events/:eventId", async (req: AuthedRequest, res) => {
