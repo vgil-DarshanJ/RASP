@@ -99,6 +99,8 @@ model Application {
   sessionEvents  SessionEvent[]
   transactionEvents TransactionEvent[]
   settingsAuditLogs ApplicationSettingsAuditLog[]
+  deviceLocations   DeviceLocation[]
+  deviceLocationPoints DeviceLocationPoint[]
 
   @@index([organizationId])
   @@map("applications")
@@ -435,4 +437,45 @@ model ApplicationSettingsAuditLog {
 
   @@index([applicationId, performedAt])
   @@map("application_settings_audit_logs")
+}
+
+/// Latest shared location per device (Task 9.3), from `location_heartbeat`
+/// events the SDK sends while the user shares location. One row per
+/// (application, device): updated, never appended. Coordinates are null after
+/// the user turned sharing off (the SDK then sends a "cleared" heartbeat).
+/// `lastCounter` is the device's last accepted heartbeat counter (envelope
+/// mode), kept apart from DeviceRegistration.lastCounter so heartbeats sent
+/// directly never collide with queued evidence envelopes.
+model DeviceLocation {
+  id            String      @id @default(cuid())
+  application   Application @relation(fields: [applicationId], references: [id])
+  applicationId String
+  deviceId      String
+  latitude      Float?
+  longitude     Float?
+  accuracyM     Float?
+  isMock        Boolean?
+  capturedAt    DateTime?
+  receivedAt    DateTime
+  lastCounter   BigInt      @default(0)
+
+  @@unique([applicationId, deviceId])
+  @@index([applicationId, receivedAt])
+  @@map("device_locations")
+}
+
+/// Short trail of shared locations per device: at most 20 points, none
+/// older than 7 days (pruned on every write; see src/location/deviceLocations.ts).
+model DeviceLocationPoint {
+  id            String      @id @default(cuid())
+  application   Application @relation(fields: [applicationId], references: [id])
+  applicationId String
+  deviceId      String
+  latitude      Float
+  longitude     Float
+  accuracyM     Float?
+  receivedAt    DateTime    @default(now())
+
+  @@index([applicationId, deviceId, receivedAt])
+  @@map("device_location_points")
 }

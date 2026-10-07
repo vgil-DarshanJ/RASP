@@ -9,6 +9,7 @@ import { isEnvelopeBody, processEnvelope } from "./envelope";
 import { prismaEnvelopeRepository } from "./envelopeRepository";
 import { extractLocation, locationColumns } from "./location";
 import { raiseTamperAlerts } from "./tamperAlerts";
+import { heartbeatLocation, prismaDeviceLocationRepository, splitHeartbeats } from "../location/deviceLocations";
 
 /** Runs after the response: never affects the stored events or the status sent. */
 function raiseTamperAlertsInBackground(args: Parameters<typeof raiseTamperAlerts>[0]) {
@@ -97,6 +98,7 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
       ipAddress,
       now: Date.now(),
       repo: prismaEnvelopeRepository,
+      locations: prismaDeviceLocationRepository,
     });
     const created = outcome.created ?? [];
 
@@ -158,8 +160,30 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
     return res.status(400).json({ error: "INVALID_EVENT_BATCH", details: parsed.error.flatten() });
   }
 
+  // Location heartbeats (Task 9.3) update the device's latest location; they
+  // are not security events. Replay protection on this path: the HMAC
+  // signature replay guard (requireApiKey).
+  const { heartbeats, others } = splitHeartbeats(parsed.data.events);
+  let locationOutcome: string | undefined;
+  for (const heartbeat of heartbeats) {
+    if (!heartbeat.deviceId) continue;
+    const decision = heartbeatLocation(heartbeat.evidence);
+    if (decision.kind === "invalid") continue;
+    locationOutcome = await prismaDeviceLocationRepository.record({
+      applicationId,
+      deviceId: heartbeat.deviceId,
+      counter: null,
+      location: decision.kind === "point" ? decision.location : null,
+      isMock: decision.kind === "point" ? decision.isMock : null,
+      receivedAt: new Date(),
+    });
+  }
+  if (others.length === 0) {
+    return res.status(202).json({ accepted: 0, ...(locationOutcome ? { location: locationOutcome } : {}) });
+  }
+
   const created = await prisma.$transaction(
-    parsed.data.events.map((event) => {
+    others.map((event) => {
       // Location only with location_opt_in === true; otherwise stripped from the evidence.
       const location = extractLocation(event.evidence);
       return prisma.securityEvent.create({

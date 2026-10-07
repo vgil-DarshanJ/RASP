@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { canonicalStringify, verifyEnvelopeSignature } from "../crypto/ecdsa";
 import { extractLocation, redactEnvelopePayload, StoredLocation } from "./location";
+import {
+  DeviceLocationRepository,
+  HEARTBEAT_MAX_AGE_MS,
+  heartbeatLocation,
+  LocationRecordOutcome,
+  splitHeartbeats,
+} from "../location/deviceLocations";
 
 /** Oldest accepted event time: envelopes may sit in the SDK's offline queue. */
 export const ENVELOPE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -120,6 +127,32 @@ const reject = (status: number, error: string, extra: Record<string, unknown> = 
   ({ status, body: { error, ...extra } });
 
 /**
+ * Records the last location heartbeat of an envelope (Task 9.3) for the
+ * signing device; `ignored` without a location store or for unusable
+ * coordinates.
+ */
+async function recordHeartbeat(
+  locations: DeviceLocationRepository | undefined,
+  device: DeviceKeyRecord,
+  envelope: Envelope,
+  heartbeat: { evidence?: unknown },
+  now: number,
+): Promise<LocationRecordOutcome | "ignored"> {
+  if (!locations) return "ignored";
+  const decision = heartbeatLocation(heartbeat.evidence);
+  if (decision.kind === "invalid") return "ignored";
+  return locations.record({
+    applicationId: device.applicationId,
+    // Same device id as this device's stored events (see envelopeRepository).
+    deviceId: device.deviceId ?? envelope.deviceKeyId,
+    counter: BigInt(envelope.monotonicCounter),
+    location: decision.kind === "point" ? decision.location : null,
+    isMock: decision.kind === "point" ? decision.isMock : null,
+    receivedAt: new Date(now),
+  });
+}
+
+/**
  * Verifies and stores one evidence envelope. Rules, in order:
  *
  * 1. Body parses and has the envelope fields → else 400.
@@ -128,6 +161,11 @@ const reject = (status: number, error: string, extra: Record<string, unknown> = 
  *    registered for → else 403.
  * 3. ECDSA P-256 signature over the canonical JSON of every field except
  *    `signature` verifies with that key → else 401.
+ * 3a. Only `location_heartbeat` results (Task 9.3) → the device's latest
+ *    location is updated and nothing else is stored: event time at most
+ *    5 minutes old → else 422 HEARTBEAT_TOO_OLD; counter above the last
+ *    heartbeat's → else 409 COUNTER_NOT_INCREASING; then 202
+ *    `{ accepted: 0, location: "updated" | "cleared" | "ignored" }`.
  * 4. Exact resend of an envelope already accepted (same `eventId`, same
  *    signature) → 200 `{ accepted: 0, duplicate: true }`, nothing stored
  *    again. The SDK removes an envelope only on 2xx, so a resend after a
@@ -145,8 +183,10 @@ export async function processEnvelope(args: {
   ipAddress?: string;
   now: number;
   repo: EnvelopeRepository;
+  /** Where location heartbeats go (Task 9.3); without it they are ignored. */
+  locations?: DeviceLocationRepository;
 }): Promise<EnvelopeOutcome> {
-  const { rawBody, applicationId, ipAddress, now, repo } = args;
+  const { rawBody, applicationId, ipAddress, now, repo, locations } = args;
 
   let parsed: unknown;
   try {
@@ -173,6 +213,19 @@ export async function processEnvelope(args: {
     return reject(401, "ENVELOPE_SIGNATURE_INVALID");
   }
 
+  // Location heartbeats are not security events. A heartbeat-only envelope
+  // updates the device's latest location and is not stored itself (one per
+  // minute would grow without limit); its replay protection is the
+  // per-device location counter and a short freshness window.
+  const { heartbeats, others } = splitHeartbeats(envelope.detectorResults);
+  if (heartbeats.length > 0 && others.length === 0) {
+    if (envelope.eventTimeMillis < now - HEARTBEAT_MAX_AGE_MS) return reject(422, "HEARTBEAT_TOO_OLD");
+    if (envelope.eventTimeMillis > now + ENVELOPE_MAX_FUTURE_MS) return reject(422, "EVENT_FROM_FUTURE");
+    const outcome = await recordHeartbeat(locations, device, envelope, heartbeats[heartbeats.length - 1], now);
+    if (outcome === "counter_not_increasing") return reject(409, "COUNTER_NOT_INCREASING");
+    return { status: 202, body: { accepted: 0, location: outcome } };
+  }
+
   const previous = await repo.findEnvelopeByEventId(envelope.eventId);
   if (previous) {
     if (previous.deviceRegistrationId === device.id && previous.signature === envelope.signature) {
@@ -197,7 +250,7 @@ export async function processEnvelope(args: {
     payloadRedacted: stored.redacted,
     ipAddress,
     receivedAt: new Date(now),
-    events: envelope.detectorResults.map((r) => {
+    events: others.map((r) => {
       const location = extractLocation(r.evidence);
       return {
         detectorId: r.detectorId,
@@ -212,6 +265,9 @@ export async function processEnvelope(args: {
 
   switch (result.outcome) {
     case "stored":
+      // A heartbeat sent together with detector results (not what the SDK
+      // does, but accepted): recorded after the envelope was stored.
+      if (heartbeats.length > 0) await recordHeartbeat(locations, device, envelope, heartbeats[heartbeats.length - 1], now);
       return {
         status: 201,
         body: { accepted: result.events.length },

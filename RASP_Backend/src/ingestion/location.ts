@@ -19,6 +19,9 @@ export const LOCATION_KEYS = new Set([
   "location_accuracy_m",
   "location_captured_at_millis",
   "location_opt_in",
+  // Location heartbeat (Task 9.3) details: also removed without opt-in.
+  "location_fix_age_seconds",
+  "location_is_mock",
 ]);
 
 export interface StoredLocation {

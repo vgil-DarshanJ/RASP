@@ -6,8 +6,9 @@
 // list leaks here exactly as it would in production.
 //
 // Supported: findMany / findFirst / findUnique / count / create (with nested
-// `create`) / createMany / update / updateMany / delete / deleteMany /
-// groupBy (always []), where-filters (equality, null, in, notIn, not,
+// `create`) / createMany / update / updateMany / upsert / delete / deleteMany /
+// groupBy (always []), where-filters (equality, null, in, notIn, not, compound
+// unique keys such as `applicationId_deviceId`,
 // contains + mode, startsWith, gt/gte/lt/lte, AND/OR/NOT, to-one relation
 // filters, some/every/none), orderBy, take, skip, cursor, distinct,
 // $transaction (callback and array) and $queryRaw (always []).
@@ -34,6 +35,8 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
     accountDeviceBindings: many("accountDeviceBinding", "applicationId"),
     sessionEvents: many("sessionEvent", "applicationId"),
     transactionEvents: many("transactionEvent", "applicationId"),
+    deviceLocations: many("deviceLocation", "applicationId"),
+    deviceLocationPoints: many("deviceLocationPoint", "applicationId"),
   },
   apiCredential: { application: one("application", "applicationId"), auditLogs: many("credentialAuditLog", "credentialId") },
   credentialAuditLog: { credential: one("apiCredential", "credentialId") },
@@ -44,6 +47,8 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   accountDeviceBinding: { application: one("application", "applicationId") },
   sessionEvent: { application: one("application", "applicationId") },
   transactionEvent: { application: one("application", "applicationId") },
+  deviceLocation: { application: one("application", "applicationId") },
+  deviceLocationPoint: { application: one("application", "applicationId") },
 };
 
 export const MODELS = Object.keys(RELATIONS);
@@ -70,6 +75,8 @@ const DEFAULTS: Record<string, () => Row> = {
   accountDeviceBinding: () => ({ firstSeenAt: new Date(), lastSeenAt: new Date() }),
   sessionEvent: () => ({ receivedAt: new Date() }),
   transactionEvent: () => ({ receivedAt: new Date() }),
+  deviceLocation: () => ({ latitude: null, longitude: null, accuracyM: null, isMock: null, capturedAt: null, lastCounter: 0n }),
+  deviceLocationPoint: () => ({ accuracyM: null, receivedAt: new Date() }),
 };
 
 export class FakeDatabase {
@@ -129,6 +136,10 @@ export class FakeDatabase {
         if (cond === null) {
           if (related) return false;
         } else if (!related || !this.matches(rel.model, related, cond as Row)) return false;
+        continue;
+      }
+      if (!rel && isCompoundKey(key, cond)) {
+        if (!this.matches(model, row, cond as Row)) return false;
         continue;
       }
       if (rel?.kind === "many") {
@@ -252,6 +263,12 @@ export class FakeDatabase {
         for (const row of rows) applyData(model, row, args.data as Row);
         return { count: rows.length };
       },
+      upsert: async (args: Row) => {
+        db.fail(model, "upsert", args);
+        const row = db.rows(model).find((r) => db.matches(model, r, args.where as Row));
+        if (row) applyData(model, row, args.update as Row);
+        return db.project(model, row ?? db.insert(model, args.create as Row), args);
+      },
       delete: async (args: Row) => {
         const table = db.rows(model);
         const index = table.findIndex((r) => db.matches(model, r, args.where as Row));
@@ -302,6 +319,13 @@ export function installFakePrisma(db: FakeDatabase): () => void {
     restore.push(() => { client[method] = original; });
   }
   return () => restore.reverse().forEach((undo) => undo());
+}
+
+/** `{ applicationId_deviceId: { applicationId, deviceId } }`: a compound unique key's fields joined by `_`. */
+function isCompoundKey(key: string, cond: unknown): boolean {
+  if (cond === null || typeof cond !== "object" || Array.isArray(cond) || cond instanceof Date) return false;
+  const fields = Object.keys(cond as Row);
+  return fields.length > 1 && fields.join("_") === key;
 }
 
 function asArray(value: unknown): Row[] {
