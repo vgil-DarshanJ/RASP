@@ -24,6 +24,9 @@ export interface DetectorGuideEntry {
   kotlinField: string;
   /** What a bank is actually exposed to if this stays off. */
   consequenceIfDisabled: string;
+  /** A rule the backend evaluates on session/transaction risk events, not an SDK
+   *  config switch — the guide says what to send instead of naming a field. */
+  backendRule?: boolean;
 }
 
 export const DETECTOR_GUIDE: DetectorGuideEntry[] = [
@@ -278,6 +281,88 @@ export const DETECTOR_GUIDE: DetectorGuideEntry[] = [
     kotlinField: "malwareReputationDetection",
     consequenceIfDisabled:
       "Known banking trojans or remote-access tools installed next to your app go unreported. Needs a signed list (malwareReputationListJson) and its public key (malwareReputationPublicKey); list packages must be visible to the app (manifest <queries>).",
+  },
+  // Task 8.1. The five SDK field names follow the existing naming pattern;
+  // check them against RaspLeanConfig once the SDK ships these detectors.
+  {
+    detectorId: "otp_interception_risk",
+    dartField: "otpInterceptionDetection",
+    kotlinField: "otpInterceptionDetection",
+    consequenceIfDisabled:
+      "A setup where an OTP can be read by another app on the phone goes unnoticed. No SMS content is read or sent.",
+  },
+  {
+    detectorId: "sms_reader_abuse",
+    dartField: "smsReaderAbuseDetection",
+    kotlinField: "smsReaderAbuseDetection",
+    consequenceIfDisabled:
+      "Apps that can read every incoming SMS — including your OTPs — sit next to your app without a trace. Only package names are reported.",
+  },
+  {
+    detectorId: "otp_forwarding_risk",
+    dartField: "otpForwardingDetection",
+    kotlinField: "otpForwardingDetection",
+    consequenceIfDisabled:
+      "No hint that OTPs might be forwarded off the device. A hint only — legitimate apps can hold the same permissions.",
+  },
+  {
+    detectorId: "remote_control_app",
+    dartField: "remoteControlAppDetection",
+    kotlinField: "remoteControlAppDetection",
+    consequenceIfDisabled:
+      "A fraudster operating the customer's phone through a remote-access app looks like the customer.",
+  },
+  {
+    detectorId: "screen_sharing_risk",
+    dartField: "screenSharingDetection",
+    kotlinField: "screenSharingDetection",
+    consequenceIfDisabled:
+      "A screen shared with a caller during a session (balances, OTPs, card details on view) is not flagged.",
+  },
+  {
+    detectorId: "new_device_for_account",
+    dartField: "session risk events",
+    kotlinField: "session risk events",
+    backendRule: true,
+    consequenceIfDisabled:
+      "Without session events the backend cannot see that an account moved to a new phone, the first step of most account takeovers.",
+  },
+  {
+    detectorId: "device_change_velocity",
+    dartField: "session risk events",
+    kotlinField: "session risk events",
+    backendRule: true,
+    consequenceIfDisabled: "An account hopping across many devices in a day (a mule or takeover pattern) is not counted.",
+  },
+  {
+    detectorId: "concurrent_sessions",
+    dartField: "session risk events (login / resume / logout)",
+    kotlinField: "session risk events (login / resume / logout)",
+    backendRule: true,
+    consequenceIfDisabled:
+      "One account logged in on several phones at once is not seen. Send logout too, or a session counts as active until its window ends.",
+  },
+  {
+    detectorId: "impossible_travel",
+    dartField: "session / transaction risk events",
+    kotlinField: "session / transaction risk events",
+    backendRule: true,
+    consequenceIfDisabled:
+      "Use of one account from two far-apart places too quickly is not flagged. Uses opted-in location when available, else the request-IP country (weaker: VPNs and roaming also change it).",
+  },
+  {
+    detectorId: "transaction_velocity",
+    dartField: "transaction risk events",
+    kotlinField: "transaction risk events",
+    backendRule: true,
+    consequenceIfDisabled: "A burst of transfers draining an account is not counted. Amounts are never sent; only counts are used.",
+  },
+  {
+    detectorId: "new_beneficiary",
+    dartField: "transaction risk events",
+    kotlinField: "transaction risk events",
+    backendRule: true,
+    consequenceIfDisabled: "A first transfer to a never-before-used (hashed) beneficiary is not marked.",
   },
 ];
 

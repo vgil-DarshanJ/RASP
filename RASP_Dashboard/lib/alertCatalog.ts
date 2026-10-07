@@ -23,6 +23,7 @@ export type AlertCategory =
   | "Runtime Protection"
   | "App Integrity"
   | "Network Security"
+  | "Fraud Risk"
   | "Other";
 
 export interface AlertCatalogEntry {
@@ -283,6 +284,86 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
     description:
       "An installed app is on the signed malware reputation list the app was configured with. Evidence names the package, category and severity from the list.",
   },
+
+  // ── Task 8.1 — OTP, remote control, screen sharing (SDK) ──────────────
+  otp_interception_risk: {
+    title: "OTP Interception Risk",
+    category: "Privacy & Screen",
+    severity: "high",
+    description:
+      "Conditions under which a one-time passcode could be read by something other than the customer (for example an app that can read incoming SMS together with another risk signal). No SMS content is collected.",
+  },
+  sms_reader_abuse: {
+    title: "SMS Reader Apps",
+    category: "Privacy & Screen",
+    severity: "high",
+    description:
+      "Other installed apps hold permission to read incoming SMS, so they could read OTPs. Reports package names only, never messages, contacts or phone numbers.",
+  },
+  otp_forwarding_risk: {
+    title: "OTP Forwarding Risk (hint)",
+    category: "Privacy & Screen",
+    severity: "medium",
+    description:
+      "A hint that OTPs may be forwarded off the device (for example an app that can both read and send SMS). A hint only: legitimate apps can hold the same permissions.",
+  },
+  remote_control_app: {
+    title: "Remote Control App",
+    category: "Privacy & Screen",
+    severity: "high",
+    description:
+      "A remote-access / remote-control app is installed or active, the usual tool in screen-sharing fraud where a caller operates the customer's phone.",
+  },
+  screen_sharing_risk: {
+    title: "Screen Sharing During App Use",
+    category: "Privacy & Screen",
+    severity: "high",
+    description:
+      "The screen appears to be shared or mirrored while the app is in use, so someone else may be watching balances, OTPs or card details.",
+  },
+
+  // ── Task 8.1 — fraud-risk rules (raised by the backend) ───────────────
+  new_device_for_account: {
+    title: "New Device for Account",
+    category: "Fraud Risk",
+    severity: "medium",
+    description:
+      "An account (hashed id) was used from a device it had not used before. The account's first device is not reported.",
+  },
+  device_change_velocity: {
+    title: "Device Change Velocity",
+    category: "Fraud Risk",
+    severity: "high",
+    description:
+      "An account was used from more new devices than the application's limit within its time window (default: more than 3 in 24 hours).",
+  },
+  concurrent_sessions: {
+    title: "Concurrent Sessions",
+    category: "Fraud Risk",
+    severity: "medium",
+    description:
+      "An account has active sessions (login/resume without logout) on more devices than the application's limit within its window (default: more than 2 in 30 minutes).",
+  },
+  impossible_travel: {
+    title: "Impossible Travel",
+    category: "Fraud Risk",
+    severity: "high",
+    description:
+      "Two events of one account are too far apart for the time between them: opted-in locations implying more than 900 km/h (default), or the request-IP country changing within 60 minutes — which a VPN or roaming can also cause.",
+  },
+  transaction_velocity: {
+    title: "Transaction Velocity",
+    category: "Fraud Risk",
+    severity: "high",
+    description:
+      "An account made more transactions than the application's limit within its window (default: more than 5 in 10 minutes). Amounts are never sent.",
+  },
+  new_beneficiary: {
+    title: "New Beneficiary",
+    category: "Fraud Risk",
+    severity: "low",
+    description: "An account sent to a beneficiary (hashed id) it had not used before.",
+  },
 };
 
 export const CATEGORY_COLORS: Record<AlertCategory, { bg: string; text: string; dot: string }> = {
@@ -291,6 +372,7 @@ export const CATEGORY_COLORS: Record<AlertCategory, { bg: string; text: string; 
   "Runtime Protection": { bg: "bg-red-50", text: "text-red-700", dot: "bg-red-500" },
   "App Integrity": { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-500" },
   "Network Security": { bg: "bg-cyan-50", text: "text-cyan-700", dot: "bg-cyan-500" },
+  "Fraud Risk": { bg: "bg-rose-50", text: "text-rose-700", dot: "bg-rose-500" },
   Other: { bg: "bg-ink-100", text: "text-ink-600", dot: "bg-ink-400" },
 };
 
@@ -311,5 +393,6 @@ export const ALL_CATEGORIES: AlertCategory[] = [
   "Runtime Protection",
   "App Integrity",
   "Network Security",
+  "Fraud Risk",
   "Other",
 ];

@@ -448,9 +448,13 @@ export default function IntegrationGuidePage() {
                       <span className="text-xs font-medium capitalize text-ink-700">{row.catalog.severity}</span>
                     </td>
                     <td className="py-3 pr-4">
-                      <code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-xs text-ink-800">
-                        {row.field}: true
-                      </code>
+                      {row.backendRule ? (
+                        <span className="text-xs text-ink-600">Backend rule: send {row.field}</span>
+                      ) : (
+                        <code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-xs text-ink-800">
+                          {row.field}: true
+                        </code>
+                      )}
                     </td>
                     <td className="max-w-md py-3 pr-5 text-xs leading-relaxed text-ink-600">
                       {row.consequenceIfDisabled}
