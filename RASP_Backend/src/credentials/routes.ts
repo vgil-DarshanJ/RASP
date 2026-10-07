@@ -6,6 +6,9 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { SDK_CATALOG } from "../sdk-distribution/catalog";
 import { encryptSecret } from "../crypto/secretBox";
 import { publicIngestionUrl } from "./ingestionUrl";
+import { ensureAccountHashSalt } from "../risk/accountHashSalt";
+import { canEditAppSecurity } from "../apps/routes";
+import { userRateLimiter } from "../redis/userRateLimit";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
@@ -149,6 +152,8 @@ credentialsRouter.post("/applications/:applicationId/credentials", async (req: A
   });
 
   const catalogEntry = SDK_CATALOG.find((s) => s.platform === app.platform);
+  // Generated here for applications created before salts existed.
+  const accountHashSalt = await ensureAccountHashSalt(app.id, { userId: req.user!.userId, ipAddress: req.ip });
 
   res.status(201).json({
     organization_id: req.user!.organizationId,
@@ -157,11 +162,42 @@ credentialsRouter.post("/applications/:applicationId/credentials", async (req: A
     platform: app.platform,
     api_key: apiKey,
     api_secret: apiSecret, // shown ONCE — not retrievable again after this response
+    // Key for the SDK's account/session/beneficiary hashes (HMAC-SHA256);
+    // same for every credential of the application.
+    account_hash_salt: accountHashSalt,
     ingestion_url: publicIngestionUrl(),
     sdk_min_version: catalogEntry?.minVersion ?? null,
     issued_at: credential.createdAt.toISOString(),
   });
 });
+
+/** GET .../account-hash-salt — the application's account-hash salt, for
+ *  completing the config of an already-issued credential (the Licenses
+ *  drawer). OWNER/ADMIN only, rate limited, and every reveal is written to
+ *  the settings audit log (without the value). Never cached. */
+credentialsRouter.get(
+  "/applications/:applicationId/account-hash-salt",
+  userRateLimiter({ scope: "salt_reveal", perUser: 20, perIp: 60, windowSeconds: 60 }),
+  async (req: AuthedRequest, res) => {
+    if (!canEditAppSecurity(req.user?.role)) return res.status(403).json({ error: "FORBIDDEN_ROLE" });
+    const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
+    if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
+
+    const actor = { userId: req.user!.userId, ipAddress: req.ip };
+    const salt = await ensureAccountHashSalt(app.id, actor);
+    await prisma.applicationSettingsAuditLog.create({
+      data: {
+        applicationId: app.id,
+        action: "ACCOUNT_HASH_SALT_REVEALED",
+        field: "accountHashSalt",
+        performedByUserId: actor.userId,
+        ipAddress: actor.ipAddress,
+      },
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ account_hash_salt: salt });
+  },
+);
 
 credentialsRouter.post(
   "/applications/:applicationId/credentials/:credentialId/revoke",
