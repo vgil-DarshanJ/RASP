@@ -5,8 +5,9 @@ import { prisma } from "../db/prisma";
  * Per-application salt for account / session / beneficiary hashes. The SDK
  * computes hex(HMAC-SHA256(key = salt bytes (from hex), msg = UTF-8 id)), so
  * the backend only ever receives hashes, and the same customer id hashes
- * differently in two applications. Never logged; returned only in an issued
- * credential's JSON and by the OWNER/ADMIN reveal endpoint.
+ * differently in two applications. Never logged; returned in full only in a
+ * newly issued credential's JSON, elsewhere as a masked prefix
+ * (security/secretFields.ts).
  */
 export function generateAccountHashSalt(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -19,12 +20,6 @@ export function isAccountHashSalt(value: unknown): value is string {
 /** The hash the SDK sends for [id] — for tests and the dev seed script. */
 export function accountHash(saltHex: string, id: string): string {
   return crypto.createHmac("sha256", Buffer.from(saltHex, "hex")).update(id, "utf8").digest("hex");
-}
-
-/** An application row without its salt — for every response that is not the credential download. */
-export function withoutAccountHashSalt<T extends Record<string, unknown>>(app: T): Omit<T, "accountHashSalt"> {
-  const { accountHashSalt: _salt, ...rest } = app;
-  return rest;
 }
 
 /**

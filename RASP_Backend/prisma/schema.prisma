@@ -89,8 +89,8 @@ model Application {
   /// Salt the SDK uses to hash account / session / beneficiary ids:
   /// hex(HMAC-SHA256(key = salt bytes, msg = UTF-8 id)). 64 lowercase hex
   /// (32 random bytes). Generated at app creation, or lazily when a
-  /// credential is issued for an older app. Returned only in the issued
-  /// credential JSON and the OWNER/ADMIN reveal endpoint; never in lists or logs.
+  /// credential is issued for an older app. Returned in full only in a newly
+  /// issued credential's JSON; elsewhere as a masked prefix; never in logs.
   accountHashSalt String?
   /// Per-application thresholds for the fraud-risk rules (src/risk/rules.ts).
   /// null = defaults. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
@@ -416,8 +416,9 @@ model TransactionEvent {
 }
 
 /// Append-only audit trail for application settings: who changed which
-/// field, when, old and new value; also salt generation and reveals
-/// (never the salt itself). `performedByUserId` is a plain id, like
+/// field, when, old and new value; also salt generation (and reveals, from
+/// an earlier version that had a reveal endpoint) — never the salt itself.
+/// `performedByUserId` is a plain id, like
 /// CredentialAuditLog, so a deleted user does not erase history.
 model ApplicationSettingsAuditLog {
   id                String      @id @default(cuid())

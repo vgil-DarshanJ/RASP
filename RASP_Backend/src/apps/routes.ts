@@ -6,7 +6,8 @@ import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { normalizeCertHash } from "../ingestion/tamperAlerts";
 import { countrySet, toCountryCode } from "../ipRisk/ipRisk";
 import { userRateLimiter } from "../redis/userRateLimit";
-import { generateAccountHashSalt, withoutAccountHashSalt } from "../risk/accountHashSalt";
+import { generateAccountHashSalt } from "../risk/accountHashSalt";
+import { PUBLIC_APPLICATION_SELECT, isSecretFieldName, maskEncryptedSecret, maskSecret } from "../security/secretFields";
 import {
   DEFAULT_RISK_RULES,
   RISK_RULE_LIMITS,
@@ -36,14 +37,15 @@ appsRouter.post("/", async (req: AuthedRequest, res) => {
     return res.status(400).json({ error: "INVALID_INPUT", details: parsed.error.flatten() });
   }
 
-  // The account-hash salt is created with the app; it is returned only in
-  // an issued credential's JSON, never here.
+  // The account-hash salt is created with the app; it is returned in full
+  // only in an issued credential's JSON — here only its masked prefix.
+  const accountHashSalt = generateAccountHashSalt();
   const app = await prisma.application.create({
     data: {
       name: parsed.data.name,
       platform: parsed.data.platform,
       organizationId: req.user!.organizationId,
-      accountHashSalt: generateAccountHashSalt(),
+      accountHashSalt,
       settingsAuditLogs: {
         create: {
           action: "ACCOUNT_HASH_SALT_GENERATED",
@@ -53,32 +55,57 @@ appsRouter.post("/", async (req: AuthedRequest, res) => {
         },
       },
     },
+    select: PUBLIC_APPLICATION_SELECT,
   });
 
-  res.status(201).json({ application: withoutAccountHashSalt(app) });
+  res.status(201).json({ application: { ...app, accountHashSaltMasked: maskSecret(accountHashSalt) } });
 });
 
 appsRouter.get("/", async (req: AuthedRequest, res) => {
   const apps = await prisma.application.findMany({
     where: { organizationId: req.user!.organizationId, archivedAt: null },
     orderBy: { createdAt: "desc" },
-    include: {
+    select: {
+      ...PUBLIC_APPLICATION_SELECT,
       credentials: {
         where: { status: "ACTIVE" },
         select: { id: true, apiKey: true, createdAt: true },
       },
     },
   });
-  res.json({ applications: apps.map(withoutAccountHashSalt) });
+  res.json({ applications: apps });
 });
 
+/** One application with all its credentials. The API secret and the
+ *  account-hash salt appear only as masked prefixes (`apiSecretMasked`,
+ *  `accountHashSaltMasked`); the full values are in the credential JSON
+ *  issued by `POST /v1/credentials/applications/:id/credentials` only. */
 appsRouter.get("/:id", async (req: AuthedRequest, res) => {
   const app = await prisma.application.findFirst({
     where: { id: req.params.id, organizationId: req.user!.organizationId, archivedAt: null },
-    include: { credentials: true },
+    select: {
+      ...PUBLIC_APPLICATION_SELECT,
+      accountHashSalt: true,
+      credentials: {
+        select: {
+          id: true, apiKey: true, status: true, createdAt: true, rotatedAt: true, revokedAt: true, deletedAt: true,
+          apiSecretEncrypted: true,
+        },
+      },
+    },
   });
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
-  res.json({ application: withoutAccountHashSalt(app) });
+  const { accountHashSalt, credentials, ...application } = app;
+  res.json({
+    application: {
+      ...application,
+      accountHashSaltMasked: maskSecret(accountHashSalt),
+      credentials: credentials.map(({ apiSecretEncrypted, ...credential }) => ({
+        ...credential,
+        apiSecretMasked: maskEncryptedSecret(apiSecretEncrypted),
+      })),
+    },
+  });
 });
 
 /** Roles allowed to change an application's security settings. */
@@ -224,7 +251,8 @@ appsRouter.get("/:id/security-settings", settingsRateLimit, async (req: AuthedRe
 
 /**
  * GET /v1/apps/:id/settings-audit — who changed which setting when, with
- * old and new values (salt generation/reveal rows carry no value).
+ * old and new values. Rows about a secret field (salt generation) never
+ * carry a value, even if one was stored.
  */
 appsRouter.get("/:id/settings-audit", settingsRateLimit, async (req: AuthedRequest, res) => {
   const app = await prisma.application.findFirst({
@@ -244,7 +272,15 @@ appsRouter.get("/:id/settings-audit", settingsRateLimit, async (req: AuthedReque
   const emailById = new Map(users.map((u) => [u.id, u.email]));
   res.json({
     logs: logs.map((l) => ({
-      ...l,
+      id: l.id,
+      applicationId: l.applicationId,
+      action: l.action,
+      field: l.field,
+      oldValue: isSecretFieldName(l.field) ? null : l.oldValue,
+      newValue: isSecretFieldName(l.field) ? null : l.newValue,
+      performedByUserId: l.performedByUserId,
+      performedAt: l.performedAt,
+      ipAddress: l.ipAddress,
       performedByEmail: l.performedByUserId ? emailById.get(l.performedByUserId) ?? "(deleted user)" : null,
     })),
   });

@@ -20,6 +20,7 @@ import { webhooksRouter } from "./webhooks/routes";
 import { ipRiskRouter } from "./ipRisk/routes";
 import { riskRouter } from "./risk/routes";
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
+import { logError } from "./security/secretFields";
 
 export function createApp() {
   const app = express();
@@ -62,8 +63,10 @@ export function createApp() {
   // Last-resort error handler — every route above is async; an unhandled
   // rejection must still resolve to a JSON 500, never an unhandled crash
   // or a hung connection. Kept last in the middleware chain on purpose.
+  // The response never carries the error; the log redacts secret values
+  // (a Prisma error prints the data it was given, e.g. a new salt).
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("[unhandled]", err);
+    logError("[unhandled]", err);
     if (!res.headersSent) {
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
     }

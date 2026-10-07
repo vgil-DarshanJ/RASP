@@ -7,17 +7,17 @@ import { SDK_CATALOG } from "../sdk-distribution/catalog";
 import { encryptSecret } from "../crypto/secretBox";
 import { publicIngestionUrl } from "./ingestionUrl";
 import { ensureAccountHashSalt } from "../risk/accountHashSalt";
-import { canEditAppSecurity } from "../apps/routes";
-import { userRateLimiter } from "../redis/userRateLimit";
+import { maskEncryptedSecret, maskSecret } from "../security/secretFields";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
 
 /** Every credential ever issued across every application in the caller's
  *  org — active and revoked, but never soft-deleted (`deletedAt: null`)
- *  — for a real "Licenses" list. Never returns `apiSecretEncrypted`; the
- *  plaintext secret was already a one-time reveal at issuance and this
- *  list has no business re-deriving it.
+ *  — for a real "Licenses" list. Never returns the secret or the
+ *  account-hash salt (both were a one-time reveal at issuance): only their
+ *  masked prefixes, `apiSecretMasked` and `application.accountHashSaltMasked`,
+ *  so a user can tell which credential file they hold.
  *
  *  Also attaches each credential's application's live `deviceCount` —
  *  a distinct-device tally straight from `SecurityEvent`, the same
@@ -41,7 +41,9 @@ credentialsRouter.get("/", async (req: AuthedRequest, res) => {
       createdAt: true,
       rotatedAt: true,
       revokedAt: true,
-      application: { select: { id: true, name: true, platform: true } },
+      // Read only to build the masked prefixes below; never returned.
+      apiSecretEncrypted: true,
+      application: { select: { id: true, name: true, platform: true, accountHashSalt: true } },
     },
   });
 
@@ -59,9 +61,14 @@ credentialsRouter.get("/", async (req: AuthedRequest, res) => {
   res.json({
     organizationId: req.user!.organizationId,
     ingestionUrl: publicIngestionUrl(),
-    credentials: credentials.map((c) => ({
+    credentials: credentials.map(({ apiSecretEncrypted, application: { accountHashSalt, ...application }, ...c }) => ({
       ...c,
-      application: { ...c.application, deviceCount: deviceCountByApp.get(c.application.id) ?? 0 },
+      apiSecretMasked: maskEncryptedSecret(apiSecretEncrypted),
+      application: {
+        ...application,
+        accountHashSaltMasked: maskSecret(accountHashSalt),
+        deviceCount: deviceCountByApp.get(application.id) ?? 0,
+      },
     })),
   });
 });
@@ -128,7 +135,11 @@ async function assertOwnedApplication(applicationId: string, organizationId: str
  *  full downloadable JSON credential shape in one response — the FE's
  *  "download JSON key" button is a direct save of this response body.
  *  Writes a `CredentialAuditLog` row so who-issued-what-when is never
- *  reconstructed after the fact from application logs alone. */
+ *  reconstructed after the fact from application logs alone.
+ *
+ *  The ONLY endpoint that returns `api_secret` and `account_hash_salt` in
+ *  full (issuing a new credential is also how a credential is rotated).
+ *  Everything else shows masked prefixes — see security/secretFields.ts. */
 credentialsRouter.post("/applications/:applicationId/credentials", async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
@@ -171,33 +182,8 @@ credentialsRouter.post("/applications/:applicationId/credentials", async (req: A
   });
 });
 
-/** GET .../account-hash-salt — the application's account-hash salt, for
- *  completing the config of an already-issued credential (the Licenses
- *  drawer). OWNER/ADMIN only, rate limited, and every reveal is written to
- *  the settings audit log (without the value). Never cached. */
-credentialsRouter.get(
-  "/applications/:applicationId/account-hash-salt",
-  userRateLimiter({ scope: "salt_reveal", perUser: 20, perIp: 60, windowSeconds: 60 }),
-  async (req: AuthedRequest, res) => {
-    if (!canEditAppSecurity(req.user?.role)) return res.status(403).json({ error: "FORBIDDEN_ROLE" });
-    const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
-    if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
-
-    const actor = { userId: req.user!.userId, ipAddress: req.ip };
-    const salt = await ensureAccountHashSalt(app.id, actor);
-    await prisma.applicationSettingsAuditLog.create({
-      data: {
-        applicationId: app.id,
-        action: "ACCOUNT_HASH_SALT_REVEALED",
-        field: "accountHashSalt",
-        performedByUserId: actor.userId,
-        ipAddress: actor.ipAddress,
-      },
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ account_hash_salt: salt });
-  },
-);
+// There is deliberately no endpoint that returns the account-hash salt of an
+// existing application: it comes only with a newly issued credential (above).
 
 credentialsRouter.post(
   "/applications/:applicationId/credentials/:credentialId/revoke",

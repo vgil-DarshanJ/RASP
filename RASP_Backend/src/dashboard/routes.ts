@@ -7,7 +7,7 @@ import { contributingDetectors, riskLevelForScore, scoreForLatestStatuses } from
 import { mapPointsHandler } from "./mapPoints";
 import { deviceRiskHandler, riskEventsHandler } from "./riskEvents";
 import { userRateLimiter } from "../redis/userRateLimit";
-import { withoutAccountHashSalt } from "../risk/accountHashSalt";
+import { PUBLIC_APPLICATION_SELECT } from "../security/secretFields";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -444,6 +444,7 @@ dashboardRouter.get("/search", async (req: AuthedRequest, res) => {
       where: { organizationId, archivedAt: null, name: { contains: q, mode: "insensitive" } },
       orderBy: { createdAt: "desc" },
       take: 10,
+      select: PUBLIC_APPLICATION_SELECT,
     }),
     prisma.securityEvent.findMany({
       where: {
@@ -461,7 +462,7 @@ dashboardRouter.get("/search", async (req: AuthedRequest, res) => {
     }),
   ]);
 
-  res.json({ applications: applications.map(withoutAccountHashSalt), events });
+  res.json({ applications, events });
 });
 
 dashboardRouter.get("/applications/:applicationId/events/:eventId", async (req: AuthedRequest, res) => {

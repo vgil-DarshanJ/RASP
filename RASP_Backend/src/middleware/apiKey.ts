@@ -3,6 +3,7 @@ import { prisma } from "../db/prisma";
 import { decryptSecret } from "../crypto/secretBox";
 import { computeSignature, isTimestampFresh, signaturesMatch } from "../crypto/hmac";
 import { checkAndRecordSignature } from "../redis/replayGuard";
+import { logError } from "../security/secretFields";
 
 export interface ApiKeyedRequest extends Request {
   applicationId?: string;
@@ -65,7 +66,7 @@ export async function requireApiKey(
     // A credential that cannot be decrypted (corrupted row, wrong master
     // key after a rotation) must never be treated as "no signature
     // required" — fail closed exactly like a genuine signature mismatch.
-    console.error("[apiKey] failed to decrypt stored secret:", err);
+    logError("[apiKey] failed to decrypt stored secret:", err);
     return res.status(401).json({ error: "CREDENTIAL_VERIFICATION_FAILED" });
   }
 
@@ -104,7 +105,7 @@ async function resolveActiveCredential(apiKey: string): Promise<CredentialLookup
       include: { application: { select: { archivedAt: true } } },
     });
   } catch (err) {
-    console.error("[apiKey] lookup failed:", err);
+    logError("[apiKey] lookup failed:", err);
     return { ok: false, status: 503, error: "AUTH_BACKEND_UNAVAILABLE" };
   }
 
