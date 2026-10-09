@@ -242,9 +242,8 @@ dashboardRouter.get("/applications/:applicationId/devices", async (req: AuthedRe
  * "latest status" data as `/devices` above (recomputed here rather than
  * shared in-process — this route can be called independently and the
  * query is cheap: one indexed DISTINCT ON scan). Gives the Dashboard a
- * single headline number plus the "why" behind it, the way Zimperium's
- * zConsole and Appdome's ThreatScope both lead with an aggregate risk
- * figure before drilling into individual devices.
+ * single headline number plus the "why" behind it: an aggregate risk
+ * figure first, then the individual devices.
  */
 dashboardRouter.get("/applications/:applicationId/risk-summary", async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
@@ -363,9 +362,7 @@ function csvField(value: unknown): string {
 }
 
 /**
- * CSV export of the audit trail — the compliance/reporting parity item
- * every vendor surveyed for this feature set has in some form (Talsec's
- * "weekly security report", Appdome's threat analytics exports). Builds
+ * CSV export of the audit trail, for compliance reporting. Builds
  * the file in memory (capped at 20,000 rows — generous for a single
  * export; a customer needing more should page by date range) rather than
  * streaming, since this dataset size makes that complexity unnecessary.

@@ -297,9 +297,8 @@ model EvidenceEnvelope {
 }
 
 /// Outbound alert policy for one application — "call this URL when a
-/// DETECTED event meets or exceeds this severity." Mirrors the
-/// threat-response-action pattern Zimperium/Appdome both expose (block /
-/// alert / log). This platform only ever alerts (no in-app blocking
+/// DETECTED event meets or exceeds this severity." Of the usual
+/// threat-response actions (block / alert / log), this platform only ever alerts (no in-app blocking
 /// decision is made server-side — that stays the SDK/host app's own
 /// call, matching the existing "SDK reports, app decides" boundary).
 /// One row per application; multiple configs would mean multiple
