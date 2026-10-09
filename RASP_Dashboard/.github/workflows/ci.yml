@@ -1,0 +1,48 @@
+# Dashboard CI (F-28): type check, unit tests, production build, dependency
+# audit. The severity test also compares with the backend table when the
+# backend is checked out next to this repository; here it is skipped and
+# only the exported copy (lib/detectorSeverities.json) is checked.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: node --test lib/*.test.ts
+
+      - name: Production build
+        run: npx next build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
+
+      - name: Dependency audit (production, high and above)
+        run: npm audit --omit=dev --audit-level=high
