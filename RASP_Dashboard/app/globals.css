@@ -346,3 +346,11 @@ body {
 .device-map-dark .leaflet-tile-pane {
   filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
 }
+
+/* Dropdown lists of native <select>s: the browser draws them on its own
+   background, so a select with light theme-text showed white-on-white
+   options in dark mode. Give every option the page's colours. */
+select option {
+  background-color: rgb(var(--surface));
+  color: rgb(var(--ink-900));
+}

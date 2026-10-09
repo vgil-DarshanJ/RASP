@@ -53,7 +53,8 @@ function AppPickerBar() {
           <select
             value={selectedAppId ?? ""}
             onChange={(e) => setSelectedAppId(e.target.value)}
-            className="bg-transparent text-sm font-medium text-ink-900 outline-none"
+            className="cursor-pointer bg-transparent text-sm font-medium text-ink-900 outline-none"
+            aria-label="Application"
           >
             {apps.map((app) => (
               <option key={app.id} value={app.id}>
