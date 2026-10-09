@@ -233,6 +233,7 @@ export default function DevicesPage() {
           applicationPlatform={selectedApp.platform}
           device={selectedDevice}
           onClose={() => setSelectedDevice(null)}
+          onErased={() => setDevices((list) => list.filter((d) => d.deviceId !== selectedDevice.deviceId))}
         />
       )}
     </div>

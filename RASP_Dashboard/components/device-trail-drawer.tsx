@@ -6,6 +6,7 @@ import { Badge, CategoryChip, PlatformIcon, XIcon, statusTone } from "@/componen
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor, type AlertCategory } from "@/lib/alertCatalog";
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
 import { DeviceRiskCard } from "@/components/risk-events";
+import { getStoredUser } from "@/lib/auth";
 
 /** The latest `high_risk_ip` result for a device, as the SDK reports it. */
 interface IpRiskResult {
@@ -170,12 +171,29 @@ export function DeviceTrailDrawer({
   applicationPlatform,
   device,
   onClose,
+  onErased,
 }: {
   applicationId: string;
   applicationPlatform: string;
   device: DeviceSummary;
   onClose: () => void;
+  /** After "Erase device data" succeeded (OWNER/ADMIN). */
+  onErased?: () => void;
 }) {
+  const isAdmin = (["OWNER", "ADMIN"] as string[]).includes(getStoredUser()?.role ?? "");
+  const [eraseError, setEraseError] = useState<string | null>(null);
+
+  async function eraseDeviceData() {
+    if (!confirm(`Erase everything stored about device ${device.deviceId} in this application (events, keys, risk events, location)? This cannot be undone.`)) return;
+    setEraseError(null);
+    try {
+      await apiFetch(`/v1/privacy/applications/${applicationId}/devices/${encodeURIComponent(device.deviceId)}`, { method: "DELETE" });
+      onErased?.();
+      onClose();
+    } catch {
+      setEraseError("Could not erase the device data.");
+    }
+  }
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -299,6 +317,16 @@ export function DeviceTrailDrawer({
               <LiveDot />
               Live — <span title={new Date(device.lastSeen).toLocaleString()}>{relativeTime(device.lastSeen, now)}</span>
             </div>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={eraseDeviceData}
+                className="mt-3 text-[11px] font-medium text-red-600 hover:underline"
+              >
+                Erase device data
+              </button>
+            )}
+            {eraseError && <p className="mt-1 text-[11px] text-red-600">{eraseError}</p>}
           </div>
 
           <IpRiskCard applicationId={applicationId} deviceId={device.deviceId} now={now} />
