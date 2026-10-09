@@ -309,6 +309,10 @@ test("auth: register and login return a token and the user, never a password or 
   assert.equal(typeof login.body.token, "string");
   await call("POST /v1/auth/login", "/v1/auth/login", 401, { as: "none", body: { email: "owner@example.test", password: MEMBER_PASSWORD } });
 
+  // Forgot password: the same answer for any email; a bad link is refused without detail.
+  await call("POST /v1/auth/forgot-password", "/v1/auth/forgot-password", 202, { as: "none", body: { email: "nobody@example.test" } });
+  await call("POST /v1/auth/reset-password", "/v1/auth/reset-password", 400, { as: "none", body: { token: "x".repeat(43), password: "long enough password" } });
+
   // The new user's own session: profile, then sign-out (raises only that user's tokenVersion).
   const newUser = { Authorization: `Bearer ${created.body.token as string}` };
   const me = await call("GET /v1/auth/me", "/v1/auth/me", 200, { as: "none", headers: newUser });

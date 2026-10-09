@@ -24,7 +24,8 @@ const many = (model: string, to: string, from = "id"): Relation => ({ model, kin
 
 const RELATIONS: Record<string, Record<string, Relation>> = {
   organization: { users: many("user", "organizationId"), applications: many("application", "organizationId") },
-  user: { organization: one("organization", "organizationId") },
+  user: { organization: one("organization", "organizationId"), passwordResetTokens: many("passwordResetToken", "userId") },
+  passwordResetToken: { user: one("user", "userId") },
   application: {
     organization: one("organization", "organizationId"),
     credentials: many("apiCredential", "applicationId"),
@@ -58,6 +59,7 @@ export const MODELS = Object.keys(RELATIONS);
 const DEFAULTS: Record<string, () => Row> = {
   organization: () => ({ createdAt: new Date() }),
   user: () => ({ role: "OWNER", createdAt: new Date(), tokenVersion: 0 }),
+  passwordResetToken: () => ({ createdAt: new Date(), requestIp: null }),
   application: () => ({
     createdAt: new Date(), archivedAt: null, expectedSigningCertSha256: null, ipBlockedCountries: [],
     ipAllowedCountries: [], accountHashSalt: null, riskRules: null, attestationPolicy: "RECORD", legacyIngestionEnabled: false,

@@ -56,6 +56,7 @@ services:
       TRUST_PROXY: "1"
       PUBLIC_INGESTION_URL: https://${DOMAIN:?set DOMAIN in production.env}/v1/events
       CORS_ORIGINS: https://${DOMAIN}
+      DASHBOARD_URL: https://${DOMAIN}
       REPUTATION_LIST_PATH: /reputation/list.json
     volumes:
       - ./reputation:/reputation:ro

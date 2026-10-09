@@ -56,6 +56,9 @@ function settings() {
   return {
     loginPerIp: intEnv("AUTH_LOGIN_RATE_LIMIT_PER_IP", 30),
     registerPerIp: intEnv("AUTH_REGISTER_RATE_LIMIT_PER_IP", 10),
+    forgotPerIp: intEnv("AUTH_FORGOT_RATE_LIMIT_PER_IP", 10),
+    resetPerIp: intEnv("AUTH_RESET_RATE_LIMIT_PER_IP", 20),
+    resetLinksPerEmailPerHour: intEnv("AUTH_RESET_LINKS_PER_EMAIL_PER_HOUR", 3),
     windowSeconds: intEnv("AUTH_RATE_LIMIT_WINDOW_SECONDS", 900),
     lockoutThreshold: intEnv("AUTH_LOCKOUT_THRESHOLD", 5),
     lockoutSeconds: intEnv("AUTH_LOCKOUT_SECONDS", 900),
@@ -78,9 +81,9 @@ async function safely<T>(fallback: T, work: () => Promise<T>): Promise<T> {
 export type Blocked = { error: "RATE_LIMIT_EXCEEDED" | "ACCOUNT_TEMPORARILY_LOCKED"; retryAfterSeconds: number };
 
 /** Counts one attempt for this IP; a [Blocked] answer when over the limit. */
-export async function checkIpLimit(kind: "login" | "register", ip: string): Promise<Blocked | null> {
+export async function checkIpLimit(kind: "login" | "register" | "forgot" | "reset", ip: string): Promise<Blocked | null> {
   const s = settings();
-  const max = kind === "login" ? s.loginPerIp : s.registerPerIp;
+  const max = { login: s.loginPerIp, register: s.registerPerIp, forgot: s.forgotPerIp, reset: s.resetPerIp }[kind];
   const key = `auth:${kind}:ip:${ip}`;
   return safely<Blocked | null>(null, async () => {
     const count = await authLimits.store.hit(key, s.windowSeconds);
@@ -113,4 +116,23 @@ export async function recordLoginFailure(email: string): Promise<void> {
 /** Clears the failure count after a successful login. */
 export async function recordLoginSuccess(email: string): Promise<void> {
   await safely(undefined, () => authLimits.store.del(`auth:fail:${accountKey(email)}`));
+}
+
+/** After a password reset: no lockout and no failures left for [email]. */
+export async function clearAccountLock(email: string): Promise<void> {
+  const id = accountKey(email);
+  await safely(undefined, async () => {
+    await authLimits.store.del(`auth:lock:${id}`);
+    await authLimits.store.del(`auth:fail:${id}`);
+  });
+}
+
+/**
+ * At most AUTH_RESET_LINKS_PER_EMAIL_PER_HOUR (default 3) reset links per
+ * email and hour, so nobody can flood an inbox; beyond it requests are
+ * answered the same way but nothing is sent.
+ */
+export async function allowResetRequest(email: string): Promise<boolean> {
+  const s = settings();
+  return safely(true, async () => (await authLimits.store.hit(`auth:reset:${accountKey(email)}`, 3600)) <= s.resetLinksPerEmailPerHour);
 }

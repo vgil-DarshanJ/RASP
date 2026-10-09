@@ -9,9 +9,12 @@ import {
   Blocked,
   checkAccountLock,
   checkIpLimit,
+  clearAccountLock,
   recordLoginFailure,
   recordLoginSuccess,
 } from "./loginGuard";
+import { consumeResetToken, issueResetLink, passwordReset } from "./passwordReset";
+import { logError } from "../security/secretFields";
 
 export const authRouter = Router();
 
@@ -129,6 +132,45 @@ authRouter.post("/login", async (req, res) => {
     user: { id: user.id, email: user.email, role: user.role },
     organization: { id: user.organization.id, name: user.organization.name },
   });
+});
+
+const forgotSchema = z.object({ email: z.string().email().max(320) });
+
+/**
+ * POST /v1/auth/forgot-password { email } → always 202 { ok: true }, sent
+ * before any lookup, so the answer never tells whether the email has an
+ * account. The link is created and delivered afterwards (see
+ * passwordReset.ts). Limited per client IP and per email.
+ */
+authRouter.post("/forgot-password", async (req, res) => {
+  const ipBlocked = await checkIpLimit("forgot", req.ip ?? "unknown");
+  if (ipBlocked) return sendBlocked(res, ipBlocked);
+  const parsed = forgotSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
+  res.status(202).json({ ok: true });
+  passwordReset.lastJob = issueResetLink(parsed.data.email, req.ip).catch((err) => logError("[password-reset]", err));
+});
+
+const resetSchema = z.object({
+  token: z.string().min(20).max(200),
+  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+});
+
+/**
+ * POST /v1/auth/reset-password { token, password } → 200 { ok: true }: the
+ * new password is set, every session of the account ends and a lockout is
+ * cleared. 400 INVALID_OR_EXPIRED_TOKEN for an unknown, expired or used link.
+ */
+authRouter.post("/reset-password", async (req, res) => {
+  const ipBlocked = await checkIpLimit("reset", req.ip ?? "unknown");
+  if (ipBlocked) return sendBlocked(res, ipBlocked);
+  const parsed = resetSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT", details: parsed.error.flatten() });
+  const passwordHash = await bcrypt.hash(parsed.data.password, bcryptRounds());
+  const email = await consumeResetToken(parsed.data.token, passwordHash);
+  if (!email) return res.status(400).json({ error: "INVALID_OR_EXPIRED_TOKEN" });
+  await clearAccountLock(email);
+  res.json({ ok: true });
 });
 
 /** The signed-in user and organization — how the dashboard checks its cookie session. */

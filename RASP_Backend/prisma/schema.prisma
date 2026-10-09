@@ -63,8 +63,25 @@ model User {
   createdAt    DateTime     @default(now())
   /// Raised by POST /v1/auth/logout; a token carrying an older value is revoked.
   tokenVersion Int          @default(0)
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
+}
+
+/// One-time password-reset link (POST /v1/auth/forgot-password). Only the
+/// SHA-256 of the token is stored; it expires after 30 minutes and is
+/// deleted when used or when a newer link is requested.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  requestIp String?
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 /// One integration — "our Android app," "our Flutter app" — registered
