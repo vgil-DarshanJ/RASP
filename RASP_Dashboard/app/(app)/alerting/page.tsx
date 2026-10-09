@@ -31,9 +31,8 @@ interface WebhookConfig {
  * `POST /v1/webhooks/applications/:id` (see BE `webhooks/routes.ts` +
  * `webhooks/dispatch.ts`), fired from the ingestion path itself and never
  * able to affect its response — a slow/unreachable customer endpoint
- * can't add latency to the SDK's own calls. Matches the "configurable
- * threat-response action" pattern Zimperium/Appdome both expose, kept
- * intentionally simple here: alert-only (no in-app block decision is
+ * can't add latency to the SDK's own calls. A configurable
+ * threat-response action, kept intentionally simple here: alert-only (no in-app block decision is
  * made server-side).
  */
 export default function AlertingPage() {
