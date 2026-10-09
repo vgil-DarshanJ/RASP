@@ -19,6 +19,7 @@ import { dashboardRouter } from "./dashboard/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { ipRiskRouter } from "./ipRisk/routes";
 import { riskRouter } from "./risk/routes";
+import { reputationRouter } from "./reputation/routes";
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 import { logError } from "./security/secretFields";
 import { allowedOrigins } from "./security/origins";
@@ -59,6 +60,7 @@ export function createApp() {
   app.use("/v1/dashboard", dashboardRouter);
   app.use("/v1/webhooks", webhooksRouter);
   app.use("/v1/ip-risk", ipRiskRouter);
+  app.use("/v1/reputation", reputationRouter);
 
   // Last-resort error handler — every route above is async; an unhandled
   // rejection must still resolve to a JSON 500, never an unhandled crash

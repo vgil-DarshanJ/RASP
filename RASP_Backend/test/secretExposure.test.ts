@@ -36,6 +36,7 @@ import { devicesRouter } from "../src/devices/routes";
 import { ingestionRouter } from "../src/ingestion/routes";
 import { ipRiskRouter } from "../src/ipRisk/routes";
 import { riskRouter } from "../src/risk/routes";
+import { reputationRouter } from "../src/reputation/routes";
 import { sdkDistributionRouter } from "../src/sdk-distribution/routes";
 import { webhooksRouter } from "../src/webhooks/routes";
 import { redis } from "../src/redis/client";
@@ -463,6 +464,8 @@ test("SDK endpoints: signature and validation errors carry no secret", async () 
   const challenge = await call("POST /v1/devices/challenge", "/v1/devices/challenge", 200, { as: "none", rawBody: "{}", headers: hmacHeaders("rasp_live_cred1", SECRET1, "{}") });
   assert.equal(typeof challenge.body.challenge, "string");
   await call("GET /v1/ip-risk", "/v1/ip-risk", 401, { as: "none", headers: hmacHeaders("rasp_live_cred1", null, "") });
+  await call("GET /v1/reputation/list", "/v1/reputation/list", 401, { as: "none" });
+  await call("GET /v1/reputation/list", "/v1/reputation/list", 404, { as: "none", headers: { "X-Api-Key": "rasp_live_cred1" } });
   await call("POST /v1/risk/events", "/v1/risk/events", 400, { as: "none", body: { riskEnvelopeVersion: 1 }, headers: { "X-Api-Key": "rasp_live_cred1" } });
   const unknownDevice = signRiskEnvelope(makeDevice("com.example.bank"), Date.now());
   await call("POST /v1/risk/events", "/v1/risk/events", 401, { as: "none", rawBody: unknownDevice.body, headers: { "X-Api-Key": "rasp_live_cred1" } });
@@ -517,7 +520,7 @@ test("every route of every router was scanned above", () => {
     ["/v1/auth", authRouter], ["/v1/apps", appsRouter], ["/v1/credentials", credentialsRouter],
     ["/v1/sdk", sdkDistributionRouter], ["/v1/events", ingestionRouter], ["/v1/devices", devicesRouter],
     ["/v1/dashboard", dashboardRouter], ["/v1/webhooks", webhooksRouter], ["/v1/ip-risk", ipRiskRouter],
-    ["/v1/risk", riskRouter],
+    ["/v1/risk", riskRouter], ["/v1/reputation", reputationRouter],
   ];
   const routes = new Set<string>(["GET /healthz"]);
   for (const [prefixPath, router] of mounted) {

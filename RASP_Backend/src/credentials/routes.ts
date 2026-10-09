@@ -9,6 +9,7 @@ import { publicIngestionUrl } from "./ingestionUrl";
 import { ensureAccountHashSalt } from "../risk/accountHashSalt";
 import { maskEncryptedSecret, maskSecret } from "../security/secretFields";
 import { requireAdminRole } from "../auth/roles";
+import { reputationPublicKey } from "../reputation/reputationList";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
@@ -178,6 +179,8 @@ credentialsRouter.post("/applications/:applicationId/credentials", requireAdminR
     // same for every credential of the application.
     account_hash_salt: accountHashSalt,
     ingestion_url: publicIngestionUrl(),
+    // Public key of the malware reputation list (not secret); null when not configured.
+    reputation_public_key: reputationPublicKey(),
     sdk_min_version: catalogEntry?.minVersion ?? null,
     issued_at: credential.createdAt.toISOString(),
   });
