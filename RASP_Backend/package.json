@@ -16,7 +16,8 @@
     "reputation:keygen": "tsx scripts/reputation-keygen.ts",
     "export:severities": "tsx scripts/export-severities.ts",
     "test:db": "tsx --test test/db.integration.test.ts",
-    "retention:run": "tsx scripts/retention-run.ts"
+    "retention:run": "tsx scripts/retention-run.ts",
+    "check:config": "tsx scripts/check-config.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",

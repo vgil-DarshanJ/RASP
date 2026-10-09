@@ -1,11 +1,11 @@
 import "dotenv/config";
 import { createApp } from "./app";
 import { startRetentionSchedule } from "./privacy/retention";
+import { configurationProblems } from "./startupChecks";
 
-const requiredEnv = ["DATABASE_URL", "REDIS_URL", "JWT_SECRET"];
-const missing = requiredEnv.filter((key) => !process.env[key]);
-if (missing.length > 0) {
-  console.error(`[startup] Missing required env vars: ${missing.join(", ")}`);
+const problems = configurationProblems();
+if (problems.length > 0) {
+  for (const problem of problems) console.error(`[startup] ${problem}`);
   console.error("[startup] Copy .env.example to .env and fill it in.");
   process.exit(1);
 }
