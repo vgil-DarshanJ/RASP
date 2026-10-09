@@ -1,10 +1,37 @@
-import { Router } from "express";
+import { Response, Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../db/prisma";
-import { signJwt } from "./jwt";
+import { AuthedRequest, requireAuth } from "../middleware/auth";
+import { secondsUntilExpiry, signJwt } from "./jwt";
+import { clearedSessionCookie, sessionCookie } from "./sessionCookie";
+import {
+  Blocked,
+  checkAccountLock,
+  checkIpLimit,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "./loginGuard";
 
 export const authRouter = Router();
+
+/** bcrypt cost for new password hashes; tests lower it with BCRYPT_ROUNDS. */
+function bcryptRounds(): number {
+  const rounds = Number(process.env.BCRYPT_ROUNDS);
+  return Number.isInteger(rounds) && rounds >= 4 && rounds <= 15 ? rounds : 12;
+}
+
+function sendBlocked(res: Response, blocked: Blocked) {
+  res.setHeader("Retry-After", String(blocked.retryAfterSeconds));
+  return res.status(429).json(blocked);
+}
+
+/** Signs the session token and sets it as the httpOnly cookie; the token is also returned for API clients. */
+function startSession(res: Response, user: { id: string; organizationId: string; role: string; tokenVersion: number }): string {
+  const token = signJwt({ userId: user.id, organizationId: user.organizationId, role: user.role, tokenVersion: user.tokenVersion });
+  res.setHeader("Set-Cookie", sessionCookie(token, secondsUntilExpiry(token)));
+  return token;
+}
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -17,8 +44,12 @@ const registerSchema = z.object({
  * platform has no "join an existing org by invite" flow yet (deferred, see
  * the plan's "explicitly deferred" section), so every registration is
  * necessarily a brand-new organization with this user as its OWNER.
+ * Limited per client IP (see loginGuard.ts).
  */
 authRouter.post("/register", async (req, res) => {
+  const ipBlocked = await checkIpLimit("register", req.ip ?? "unknown");
+  if (ipBlocked) return sendBlocked(res, ipBlocked);
+
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "INVALID_INPUT", details: parsed.error.flatten() });
@@ -30,7 +61,7 @@ authRouter.post("/register", async (req, res) => {
     return res.status(409).json({ error: "EMAIL_ALREADY_REGISTERED" });
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(password, bcryptRounds());
 
   const { user, organization } = await prisma.$transaction(async (tx) => {
     const organization = await tx.organization.create({
@@ -47,7 +78,7 @@ authRouter.post("/register", async (req, res) => {
     return { user, organization };
   });
 
-  const token = signJwt({ userId: user.id, organizationId: organization.id, role: user.role });
+  const token = startSession(res, { ...user, tokenVersion: user.tokenVersion ?? 0 });
 
   res.status(201).json({
     token,
@@ -61,12 +92,22 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+/**
+ * Limited per client IP; repeated failures lock the email for a while
+ * (429 ACCOUNT_TEMPORARILY_LOCKED, with Retry-After) — see loginGuard.ts.
+ */
 authRouter.post("/login", async (req, res) => {
+  const ipBlocked = await checkIpLimit("login", req.ip ?? "unknown");
+  if (ipBlocked) return sendBlocked(res, ipBlocked);
+
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "INVALID_INPUT" });
   }
   const { email, password } = parsed.data;
+
+  const locked = await checkAccountLock(email);
+  if (locked) return sendBlocked(res, locked);
 
   const user = await prisma.user.findUnique({
     where: { email },
@@ -76,14 +117,40 @@ authRouter.post("/login", async (req, res) => {
   // Same generic error whether the email doesn't exist or the password is
   // wrong — never leak which one it was to an unauthenticated caller.
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    await recordLoginFailure(email);
     return res.status(401).json({ error: "INVALID_CREDENTIALS" });
   }
+  await recordLoginSuccess(email);
 
-  const token = signJwt({ userId: user.id, organizationId: user.organizationId, role: user.role });
+  const token = startSession(res, { ...user, tokenVersion: user.tokenVersion ?? 0 });
 
   res.json({
     token,
     user: { id: user.id, email: user.email, role: user.role },
     organization: { id: user.organization.id, name: user.organization.name },
   });
+});
+
+/** The signed-in user and organization — how the dashboard checks its cookie session. */
+authRouter.get("/me", requireAuth, async (req: AuthedRequest, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user!.userId },
+    include: { organization: true },
+  });
+  if (!user) return res.status(401).json({ error: "ACCOUNT_NOT_FOUND" });
+  res.json({
+    user: { id: user.id, email: user.email, role: user.role },
+    organization: { id: user.organization.id, name: user.organization.name },
+  });
+});
+
+/**
+ * Signs the user out everywhere: raises `tokenVersion`, so every token issued
+ * so far (this browser, other browsers, API scripts) is rejected with 401
+ * TOKEN_REVOKED, and removes the session cookie.
+ */
+authRouter.post("/logout", requireAuth, async (req: AuthedRequest, res) => {
+  await prisma.user.update({ where: { id: req.user!.userId }, data: { tokenVersion: { increment: 1 } } });
+  res.setHeader("Set-Cookie", clearedSessionCookie());
+  res.status(204).end();
 });

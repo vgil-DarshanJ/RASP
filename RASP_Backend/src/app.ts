@@ -21,6 +21,7 @@ import { ipRiskRouter } from "./ipRisk/routes";
 import { riskRouter } from "./risk/routes";
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 import { logError } from "./security/secretFields";
+import { allowedOrigins } from "./security/origins";
 
 export function createApp() {
   const app = express();
@@ -28,8 +29,7 @@ export function createApp() {
   // Client IP behind a proxy (TRUST_PROXY) — see requestSetup.ts.
   applyTrustProxy(app);
 
-  const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000").split(",");
-  app.use(cors({ origin: allowedOrigins, credentials: true }));
+  app.use(cors({ origin: allowedOrigins(), credentials: true }));
 
   // Risk events: own 16 KB JSON parser (413 above it), so mounted before the
   // app-wide 1 MB parser below — see risk/routes.ts.

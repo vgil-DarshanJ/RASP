@@ -56,7 +56,7 @@ export const MODELS = Object.keys(RELATIONS);
 /** Column defaults the schema would fill in. */
 const DEFAULTS: Record<string, () => Row> = {
   organization: () => ({ createdAt: new Date() }),
-  user: () => ({ role: "OWNER", createdAt: new Date() }),
+  user: () => ({ role: "OWNER", createdAt: new Date(), tokenVersion: 0 }),
   application: () => ({
     createdAt: new Date(), archivedAt: null, expectedSigningCertSha256: null, ipBlockedCountries: [],
     ipAllowedCountries: [], accountHashSalt: null, riskRules: null,
@@ -348,6 +348,10 @@ function copy(value: unknown): unknown {
 function applyData(model: string, row: Row, data: Row) {
   for (const [key, value] of Object.entries(data)) {
     if (RELATIONS[model]?.[key]) throw new Error(`fake prisma: nested writes in update are not supported (${model}.${key})`);
+    if (value !== null && typeof value === "object" && "increment" in (value as Row)) {
+      row[key] = ((row[key] as number | undefined) ?? 0) + ((value as Row).increment as number);
+      continue;
+    }
     row[key] = normalize(value);
   }
   if (model === "webhookConfig") row.updatedAt = new Date();

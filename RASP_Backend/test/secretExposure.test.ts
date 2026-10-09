@@ -304,6 +304,13 @@ test("auth: register and login return a token and the user, never a password or 
   const login = await call("POST /v1/auth/login", "/v1/auth/login", 200, { as: "none", body: { email: "owner@example.test", password: OWNER_PASSWORD } });
   assert.equal(typeof login.body.token, "string");
   await call("POST /v1/auth/login", "/v1/auth/login", 401, { as: "none", body: { email: "owner@example.test", password: MEMBER_PASSWORD } });
+
+  // The new user's own session: profile, then sign-out (raises only that user's tokenVersion).
+  const newUser = { Authorization: `Bearer ${created.body.token as string}` };
+  const me = await call("GET /v1/auth/me", "/v1/auth/me", 200, { as: "none", headers: newUser });
+  assert.equal((me.body.user as Row).email, "new@example.test");
+  await call("POST /v1/auth/logout", "/v1/auth/logout", 204, { as: "none", headers: newUser });
+  await call("GET /v1/auth/me", "/v1/auth/me", 401, { as: "none", headers: newUser });
 });
 
 // ── applications ──────────────────────────────────────────────────────────

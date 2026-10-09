@@ -50,6 +50,8 @@ model User {
   organization Organization @relation(fields: [organizationId], references: [id])
   organizationId String
   createdAt    DateTime     @default(now())
+  /// Raised by POST /v1/auth/logout; a token carrying an older value is revoked.
+  tokenVersion Int          @default(0)
 
   @@map("users")
 }
