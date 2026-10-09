@@ -50,10 +50,10 @@ const DETECTORS = [
 ];
 
 const STATS = [
-  { value: "26", label: "Runtime detectors" },
-  { value: "HMAC", label: "Signed event ingestion" },
+  { value: "42", label: "On-device detectors" },
+  { value: "ES256", label: "Device-signed event ingestion" },
   { value: "Live", label: "Threat telemetry" },
-  { value: "4", label: "Platforms — Android, iOS, Flutter, RN" },
+  { value: "2", label: "SDKs — Android native, Flutter (Android)" },
 ];
 
 const CAPABILITIES = [
@@ -255,7 +255,7 @@ export default function RootPage() {
                     Detectors
                   </div>
                   <h2 className="mt-2 text-2xl font-semibold text-white">
-                    26 detectors watching every device your app runs on.
+                    42 detectors watching every device your app runs on.
                   </h2>
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

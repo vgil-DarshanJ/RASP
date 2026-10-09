@@ -260,7 +260,7 @@ class YourApplication : Application() {
         }
 
         // Starts the background poll/ship loop — the only place you
-        // choose which of the 26 detectors are active.
+        // choose which of the 42 detectors are active.
         RaspLeanSession.start(
             context = applicationContext,
             config = RaspLeanConfig(
