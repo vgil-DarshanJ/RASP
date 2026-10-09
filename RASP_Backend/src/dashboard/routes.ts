@@ -8,6 +8,7 @@ import { mapPointsHandler } from "./mapPoints";
 import { deviceRiskHandler, riskEventsHandler } from "./riskEvents";
 import { userRateLimiter } from "../redis/userRateLimit";
 import { PUBLIC_APPLICATION_SELECT } from "../security/secretFields";
+import { csvField } from "./csv";
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth);
@@ -355,11 +356,6 @@ const exportQuerySchema = z.object({
   hours: z.coerce.number().min(1).max(24 * 90).default(24 * 7),
 });
 
-function csvField(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const str = typeof value === "string" ? value : JSON.stringify(value);
-  return `"${str.replace(/"/g, '""')}"`;
-}
 
 /**
  * CSV export of the audit trail, for compliance reporting. Builds
