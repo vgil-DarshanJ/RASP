@@ -21,17 +21,35 @@ export function computeSignature(apiSecret: string, timestamp: string, rawBody: 
   return crypto.createHmac("sha256", apiSecret).update(signingString).digest("hex");
 }
 
+const SIGNATURE_HEX = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * The one accepted spelling of an `X-Signature`: exactly 64 hex characters,
+ * returned lower-cased; `null` for anything else (padding, junk after the
+ * digest, odd length, other encodings).
+ *
+ * `Buffer.from(x, "hex")` ignores case and silently drops everything from the
+ * first non-hex character on, so without this check one captured signature
+ * could be re-sent as many different header strings (upper-cased, with
+ * trailing junk) that all decode to the same digest, and each would pass a
+ * replay cache keyed by the raw header (F-01). The replay cache is keyed by
+ * this canonical form instead.
+ */
+export function canonicalSignature(header: string): string | null {
+  return SIGNATURE_HEX.test(header) ? header.toLowerCase() : null;
+}
+
 /** Constant-time comparison — a plain `===`/string-equality check on a
  *  MAC leaks timing information proportional to how many leading bytes
  *  match, which a patient attacker can exploit to forge a valid signature
  *  byte-by-byte. `crypto.timingSafeEqual` closes that side channel. Both
- *  buffers must be equal length first (checked here) since the function
- *  itself throws on a length mismatch rather than returning false. */
+ *  values must be well-formed 64-hex-character digests (see
+ *  [canonicalSignature]); anything else never matches. */
 export function signaturesMatch(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, "hex");
-  const bufB = Buffer.from(b, "hex");
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+  const canonicalA = canonicalSignature(a);
+  const canonicalB = canonicalSignature(b);
+  if (canonicalA === null || canonicalB === null) return false;
+  return crypto.timingSafeEqual(Buffer.from(canonicalA, "hex"), Buffer.from(canonicalB, "hex"));
 }
 
 /** Rejects a timestamp more than [toleranceMs] away from the server's own

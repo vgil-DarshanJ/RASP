@@ -4,7 +4,7 @@
 // Not exercised: the Express middleware itself, which needs Postgres and Redis.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { computeSignature, isTimestampFresh, signaturesMatch } from "../src/crypto/hmac";
+import { canonicalSignature, computeSignature, isTimestampFresh, signaturesMatch } from "../src/crypto/hmac";
 import { isEnvelopeBody } from "../src/ingestion/envelope";
 
 describe("legacy HMAC batch path", () => {
@@ -22,6 +22,17 @@ describe("legacy HMAC batch path", () => {
     assert.equal(signaturesMatch(sig, computeSignature(secret, ts, Buffer.from(body.toString().replace("DETECTED", "SECURE")))), false);
     assert.equal(signaturesMatch(sig, computeSignature(secret, String(Number(ts) + 1), body)), false);
     assert.equal(signaturesMatch(sig, computeSignature("other-secret", ts, body)), false);
+  });
+
+  test("only the exact 64-hex form matches: upper case is canonicalised, padding and trailing junk never match (F-01)", () => {
+    const sig = computeSignature(secret, ts, body);
+    assert.equal(canonicalSignature(sig), sig);
+    assert.equal(canonicalSignature(sig.toUpperCase()), sig);
+    for (const variant of [sig + "zz", sig + "00", sig + " ", " " + sig, sig.slice(0, 63), sig.slice(0, 63) + "g", ""]) {
+      assert.equal(canonicalSignature(variant), null, JSON.stringify(variant));
+      assert.equal(signaturesMatch(variant, sig), false, JSON.stringify(variant));
+    }
+    assert.equal(signaturesMatch(sig.toUpperCase(), sig), true);
   });
 
   test("timestamp window is ±5 minutes by default", () => {

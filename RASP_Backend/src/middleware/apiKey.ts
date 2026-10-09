@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { prisma } from "../db/prisma";
 import { decryptSecret } from "../crypto/secretBox";
-import { computeSignature, isTimestampFresh, signaturesMatch } from "../crypto/hmac";
+import { canonicalSignature, computeSignature, isTimestampFresh, signaturesMatch } from "../crypto/hmac";
 import { checkAndRecordSignature } from "../redis/replayGuard";
 import { logError } from "../security/secretFields";
 
@@ -43,6 +43,9 @@ export async function requireApiKey(
   if (!apiKey) return res.status(401).json({ error: "MISSING_API_KEY" });
   if (!signature) return res.status(401).json({ error: "MISSING_SIGNATURE" });
   if (!timestampHeader) return res.status(401).json({ error: "MISSING_TIMESTAMP" });
+  // One spelling per signature, so a re-encoded copy cannot pass the replay cache (F-01).
+  const canonical = canonicalSignature(signature);
+  if (canonical === null) return res.status(401).json({ error: "INVALID_SIGNATURE_FORMAT" });
 
   const timestampMs = Number(timestampHeader);
   if (!Number.isFinite(timestampMs)) {
@@ -72,11 +75,11 @@ export async function requireApiKey(
 
   const rawBody = req.rawBody ?? Buffer.alloc(0);
   const expectedSignature = computeSignature(apiSecret, timestampHeader, rawBody);
-  if (!signaturesMatch(signature, expectedSignature)) {
+  if (!signaturesMatch(canonical, expectedSignature)) {
     return res.status(401).json({ error: "SIGNATURE_MISMATCH" });
   }
 
-  const replayResult = await checkAndRecordSignature(apiKey, signature, Math.ceil(toleranceMs / 1000) + 60);
+  const replayResult = await checkAndRecordSignature(apiKey, canonical, Math.ceil(toleranceMs / 1000) + 60);
   if (replayResult === "replayed") {
     return res.status(401).json({ error: "REPLAYED_REQUEST" });
   }

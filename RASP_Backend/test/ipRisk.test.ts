@@ -507,6 +507,28 @@ describe("real requireApiKey (Prisma lookup and Redis replay check replaced in-p
       await s.close();
     }
   });
+
+  test("a captured signature re-sent upper-cased is a replay; with padding or junk it is rejected before any lookup (F-01)", async () => {
+    const geo = fakeLookup({ "203.0.113.7": "IN" });
+    const s = await serve({ TRUST_PROXY: "1", IP_RISK_GEO_SOURCE: "lookup" }, { geoLookup: geo.lookup }, { realAuth: true });
+    try {
+      const xff = { "X-Forwarded-For": "203.0.113.7" };
+      const ts = String(Date.now() + 5);
+      const headers = { ...xff, ...signed(ts, Buffer.alloc(0)) };
+      assert.equal((await s.get(headers)).status, 200);
+
+      const upper = await s.get({ ...headers, "X-Signature": headers["X-Signature"].toUpperCase() });
+      assert.deepEqual([upper.status, upper.body], [401, { error: "REPLAYED_REQUEST" }]);
+
+      for (const junk of ["00", "zz", "=="]) {
+        const padded = await s.get({ ...headers, "X-Signature": headers["X-Signature"] + junk });
+        assert.deepEqual([padded.status, padded.body], [401, { error: "INVALID_SIGNATURE_FORMAT" }], junk);
+      }
+      assert.deepEqual(geo.calls, ["203.0.113.7"]);
+    } finally {
+      await s.close();
+    }
+  });
 });
 
 describe("HMAC for the empty GET body", () => {
