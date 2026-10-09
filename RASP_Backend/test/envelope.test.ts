@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import {
+  deviceColumns,
   ENVELOPE_MAX_AGE_MS,
   ENVELOPE_MAX_FUTURE_MS,
   isEnvelopeBody,
@@ -190,6 +191,25 @@ describe("evidence envelope", () => {
     const { repo, device } = setup();
     const out = await run(repo, signEnvelope(device, NOW, { futureField: { a: 1 } }).body);
     assert.equal(out.status, 201);
+  });
+
+  test("the signed device object (model, OS) is accepted and mapped to the event columns", async () => {
+    const { repo, device } = setup();
+    const phone = { manufacturer: "OnePlus", model: "CPH2581", osPlatform: "android", osVersion: "15", appVersion: "1.0.0" };
+    const out = await run(repo, signEnvelope(device, NOW, { device: phone }).body);
+    assert.equal(out.status, 201, JSON.stringify(out.body));
+    assert.equal(repo.events[0].deviceModel, "CPH2581");
+    assert.equal(repo.events[0].osPlatform, "android");
+    assert.deepEqual(deviceColumns({ device: phone }), {
+      deviceModel: "CPH2581", manufacturer: "OnePlus", osPlatform: "android", osVersion: "15", appVersion: "1.0.0",
+    });
+    assert.deepEqual(deviceColumns({}), {
+      deviceModel: undefined, manufacturer: undefined, osPlatform: undefined, osVersion: undefined, appVersion: undefined,
+    });
+
+    const { repo: repo2, device: device2 } = setup();
+    const tooLong = await run(repo2, signEnvelope(device2, NOW, { device: { model: "x".repeat(201) } }).body);
+    assert.equal(tooLong.status, 400);
   });
 
   test("malformed bodies are rejected with 400", async () => {

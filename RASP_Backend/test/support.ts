@@ -8,6 +8,7 @@ import { canonicalStringify, computeDeviceKeyId } from "../src/crypto/ecdsa";
 import {
   CreatedEvent,
   DeviceKeyRecord,
+  deviceColumns,
   EnvelopeRepository,
   StoreEnvelopeInput,
   StoreResult,
@@ -64,8 +65,9 @@ export class MemoryEnvelopeRepository implements EnvelopeRepository {
       detectorId: e.detectorId,
       status: e.status,
       deviceId: device.deviceId ?? input.envelope.deviceKeyId,
-      deviceModel: null,
-      osPlatform: null,
+      // Same mapping as prismaEnvelopeRepository.
+      deviceModel: deviceColumns(input.envelope).deviceModel ?? null,
+      osPlatform: deviceColumns(input.envelope).osPlatform ?? null,
       receivedAt: input.receivedAt,
       evidence: e.evidence,
       envelopeId,

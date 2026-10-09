@@ -38,9 +38,29 @@ export const envelopeSchema = z.object({
   })).min(1).max(200),
   signature: z.string().min(1).max(200),
   signatureAlgorithm: z.literal("ES256"),
+  /** The phone, for the dashboard (signed like every other field); older SDKs omit it. */
+  device: z.object({
+    manufacturer: z.string().max(200).optional(),
+    model: z.string().max(200).optional(),
+    osPlatform: z.string().max(50).optional(),
+    osVersion: z.string().max(100).optional(),
+    appVersion: z.string().max(100).optional(),
+  }).optional(),
 });
 
 export type Envelope = z.infer<typeof envelopeSchema>;
+
+/** `security_events` identity columns from the envelope's `device` object; all undefined without it. */
+export function deviceColumns(envelope: Pick<Envelope, "device">) {
+  const d = envelope.device;
+  return {
+    deviceModel: d?.model,
+    manufacturer: d?.manufacturer,
+    osPlatform: d?.osPlatform,
+    osVersion: d?.osVersion,
+    appVersion: d?.appVersion,
+  };
+}
 
 /**
  * Which ingestion path a parsed body takes. Anything carrying

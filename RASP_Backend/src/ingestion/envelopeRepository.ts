@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
-import { EnvelopeRepository, StoreResult } from "./envelope";
+import { deviceColumns, EnvelopeRepository, StoreResult } from "./envelope";
 import { locationColumns } from "./location";
 
 /**
@@ -75,6 +75,8 @@ export const prismaEnvelopeRepository: EnvelopeRepository = {
             reason: e.reason,
             // The registered device id if the SDK sent one, else the key id — stable per key.
             deviceId: device.deviceId ?? envelope.deviceKeyId,
+            // Model / OS from the envelope's signed `device` object (absent from older SDKs).
+            ...deviceColumns(envelope),
             sdkVersion: envelope.sdkVersion,
             clientObservedAt: e.clientObservedAt,
             receivedAt: input.receivedAt,
