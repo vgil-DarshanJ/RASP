@@ -158,6 +158,14 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
     severity: "high",
     description: "Whether the app has been modified from its original signed package.",
   },
+  tamper_signing_mismatch: {
+    title: "Signing Certificate Mismatch",
+    category: "App Integrity",
+    severity: "high",
+    description:
+      "Raised by the backend: a device reported a signing certificate other than the one set in " +
+      "Security Settings, so this copy of the app was re-signed (repackaged).",
+  },
   untrusted_install_source: {
     title: "Installation Source",
     category: "App Integrity",
