@@ -1,4 +1,9 @@
 node_modules/
 dist/
-.env
 *.log
+
+# Environment files can hold secrets: never commit them; only the examples are tracked.
+.env
+.env.*
+!.env.example
+!.env.server.example
