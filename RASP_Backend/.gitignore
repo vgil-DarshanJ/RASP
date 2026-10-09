@@ -6,4 +6,3 @@ dist/
 .env
 .env.*
 !.env.example
-!.env.server.example
