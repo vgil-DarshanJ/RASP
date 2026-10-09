@@ -83,3 +83,79 @@ export function attestationSecurityLevel(keyDescription: Buffer): number {
   if (level.tagNumber !== 10 || level.content.length !== 1) throw new Error("attestationSecurityLevel is not an ENUMERATED");
   return level.content[0];
 }
+
+/** What the server reads from a KeyDescription (only meaningful once the chain is verified). */
+export interface KeyDescriptionInfo {
+  attestationVersion: number | null;
+  /** 0 Software, 1 TrustedEnvironment, 2 StrongBox. */
+  attestationSecurityLevel: number;
+  /** Hex of attestationChallenge (the value the app passed when it created the key). */
+  attestationChallengeHex: string;
+  /** Package names from attestationApplicationId (tag 709); empty when absent. */
+  attestedPackages: string[];
+  /** SHA-256 digests of the app's signing certificates (uppercase hex) from attestationApplicationId. */
+  attestedSigningCertSha256: string[];
+  /** RootOfTrust (tag 704) in the hardware-enforced list; null when absent. */
+  deviceLocked: boolean | null;
+  verifiedBootState: "VERIFIED" | "SELF_SIGNED" | "UNVERIFIED" | "FAILED" | null;
+  /** YYYYMM, from tag 706 (hardware-enforced first, then software-enforced). */
+  osPatchLevel: number | null;
+}
+
+function integer(tlv: Tlv): number {
+  let value = 0;
+  for (const byte of tlv.content) value = value * 256 + byte;
+  return value;
+}
+
+/** Field [tag] EXPLICIT of an AuthorizationList, or undefined. */
+function authField(list: Tlv | undefined, tag: number): Tlv | undefined {
+  if (!list) return undefined;
+  const field = children(list).find((t) => t.tagClass === 2 && t.tagNumber === tag);
+  return field ? children(field)[0] : undefined;
+}
+
+const BOOT_STATES = ["VERIFIED", "SELF_SIGNED", "UNVERIFIED", "FAILED"] as const;
+
+/** Parses the fields of a KeyDescription the server checks. Throws on malformed DER. */
+export function parseKeyDescription(keyDescription: Buffer): KeyDescriptionInfo {
+  const fields = children(readTlv(keyDescription, 0).tlv);
+  if (fields.length < 8) throw new Error(`KeyDescription has ${fields.length} fields, expected 8`);
+  const [version, level, , , challenge, , softwareEnforced, hardwareEnforced] = fields;
+  if (level.tagNumber !== 10 || level.content.length !== 1) throw new Error("attestationSecurityLevel is not an ENUMERATED");
+
+  const packages: string[] = [];
+  const digests: string[] = [];
+  const appIdField = authField(softwareEnforced, 709) ?? authField(hardwareEnforced, 709);
+  if (appIdField && appIdField.tagNumber === 4) {
+    const appId = children(readTlv(appIdField.content, 0).tlv);
+    for (const info of appId[0] ? children(appId[0]) : []) {
+      const name = children(info)[0];
+      if (name?.tagNumber === 4) packages.push(name.content.toString("utf8"));
+    }
+    for (const digest of appId[1] ? children(appId[1]) : []) {
+      if (digest.tagNumber === 4) digests.push(digest.content.toString("hex").toUpperCase());
+    }
+  }
+
+  let deviceLocked: boolean | null = null;
+  let verifiedBootState: KeyDescriptionInfo["verifiedBootState"] = null;
+  const rootOfTrust = authField(hardwareEnforced, 704);
+  if (rootOfTrust) {
+    const parts = children(rootOfTrust);
+    if (parts[1]?.tagNumber === 1) deviceLocked = parts[1].content[0] !== 0;
+    if (parts[2]?.tagNumber === 10) verifiedBootState = BOOT_STATES[parts[2].content[0]] ?? null;
+  }
+  const patch = authField(hardwareEnforced, 706) ?? authField(softwareEnforced, 706);
+
+  return {
+    attestationVersion: version.tagNumber === 2 ? integer(version) : null,
+    attestationSecurityLevel: level.content[0],
+    attestationChallengeHex: challenge.tagNumber === 4 ? challenge.content.toString("hex") : "",
+    attestedPackages: packages,
+    attestedSigningCertSha256: digests,
+    deviceLocked,
+    verifiedBootState,
+    osPatchLevel: patch && patch.tagNumber === 2 ? integer(patch) : null,
+  };
+}

@@ -54,6 +54,17 @@ ingestionRouter.use(authenticateIngestion);
  * Legacy event schema (HMAC-signed batches) — mirrors `RaspCheckResult`/`RaspCheckStatus`
  * from `android_core`.
  */
+/** `applications.legacyIngestionEnabled`; tests replace `allowed`. */
+export const legacyIngestion: { allowed: (applicationId: string) => Promise<boolean> } = {
+  allowed: async (applicationId) =>
+    (await prisma.application.findUnique({ where: { id: applicationId }, select: { legacyIngestionEnabled: true } }))
+      ?.legacyIngestionEnabled ?? false,
+};
+
+function legacyIngestionAllowed(applicationId: string): Promise<boolean> {
+  return legacyIngestion.allowed(applicationId);
+}
+
 const legacyEventSchema = z.object({
   detectorId: z.string().min(1).max(100),
   status: z.enum(["SECURE", "DETECTED", "UNAVAILABLE", "UNKNOWN", "ERROR"]),
@@ -147,6 +158,13 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
     return;
   }
 
+  // Legacy HMAC batches carry no device key: anyone holding the app's API
+  // secret could send them (F-14). Applications created since 2026-10-09
+  // accept signed envelopes only, unless an OWNER/ADMIN turns this back on.
+  if (!(await legacyIngestionAllowed(applicationId))) {
+    return res.status(403).json({ error: "LEGACY_INGESTION_DISABLED" });
+  }
+
   let parsedBody: unknown;
   try {
     parsedBody = JSON.parse(rawBodyStr);
@@ -154,7 +172,7 @@ ingestionRouter.post("/", async (req: ApiKeyedRequest, res) => {
     return res.status(400).json({ error: "INVALID_JSON" });
   }
 
-  // Legacy HMAC batch path (unchanged)
+  // Legacy HMAC batch path
   const parsed = legacyBatchSchema.safeParse(parsedBody);
   if (!parsed.success) {
     return res.status(400).json({ error: "INVALID_EVENT_BATCH", details: parsed.error.flatten() });

@@ -46,6 +46,13 @@ describe("parseAppSecurityPatch", () => {
     assert.equal((parseAppSecurityPatch({ accountHashSalt: "0".repeat(64) }) as { error: string }).error, "INVALID_INPUT");
   });
 
+  test("attestation policy and the legacy switch: valid values pass, others are rejected (F-14)", () => {
+    assert.deepEqual(parseAppSecurityPatch({ attestationPolicy: "REQUIRE_HARDWARE", legacyIngestionEnabled: false }),
+      { ok: true, data: { attestationPolicy: "REQUIRE_HARDWARE", legacyIngestionEnabled: false } });
+    assert.equal((parseAppSecurityPatch({ attestationPolicy: "BLOCK_ALL" }) as { error: string }).error, "INVALID_INPUT");
+    assert.equal((parseAppSecurityPatch({ legacyIngestionEnabled: "yes" }) as { error: string }).error, "INVALID_INPUT");
+  });
+
   test("only OWNER and ADMIN may change security settings", () => {
     assert.equal(canEditAppSecurity("OWNER"), true);
     assert.equal(canEditAppSecurity("ADMIN"), true);

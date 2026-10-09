@@ -70,6 +70,8 @@ export interface RiskDeviceKey {
   deviceId: string | null;
   publicKey: string;
   lastRiskCounter: bigint;
+  /** `false` when the application requires hardware attestation and this key falls short. */
+  meetsAttestationPolicy?: boolean;
 }
 
 /** Stored location: rounded to 2 decimals (~1 km). */
@@ -151,6 +153,7 @@ export async function processRiskEvent(args: {
   // Another application's key is reported as unknown: no hint that it exists.
   if (!device || device.applicationId !== applicationId) return reject(401, "UNKNOWN_DEVICE_KEY");
   if (device.appId !== envelope.appId) return reject(403, "APP_ID_MISMATCH");
+  if (device.meetsAttestationPolicy === false) return reject(401, "DEVICE_NOT_ATTESTED");
 
   const { signature: _signature, ...unsigned } = body as Record<string, unknown>;
   if (!verifyEnvelopeSignature(device.publicKey, canonicalStringify(unsigned), envelope.signature)) {

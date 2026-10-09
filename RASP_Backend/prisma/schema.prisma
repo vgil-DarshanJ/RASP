@@ -29,6 +29,17 @@ enum CredentialStatus {
   REVOKED
 }
 
+/// How device registration treats key attestation (src/devices/attestationPolicy.ts).
+/// RECORD: register every key and record the verdict (default).
+/// REQUIRE_HARDWARE: register, and accept envelopes and risk events, only from
+/// keys with a Google-verified hardware attestation for this app (package and,
+/// when set, signing certificate) whose possession was proven by signing a
+/// server challenge.
+enum AttestationPolicy {
+  RECORD
+  REQUIRE_HARDWARE
+}
+
 /// A customer's organization/bank — the top-level tenant boundary. Every
 /// alert eventually traces back to exactly one of these, which is what
 /// decides who gets notified in a future alert-routing phase.
@@ -97,6 +108,12 @@ model Application {
   /// Per-application thresholds for the fraud-risk rules (src/risk/rules.ts).
   /// null = defaults. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
   riskRules      Json?
+  /// See enum AttestationPolicy. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
+  attestationPolicy AttestationPolicy @default(RECORD)
+  /// Whether POST /v1/events still accepts legacy HMAC batches (no device
+  /// key). Applications created before 2026-10-09 keep true; new ones start
+  /// false, so they accept signed envelopes only (F-14).
+  legacyIngestionEnabled Boolean @default(false)
   accountDeviceBindings AccountDeviceBinding[]
   sessionEvents  SessionEvent[]
   transactionEvents TransactionEvent[]
@@ -242,11 +259,13 @@ model DeviceRegistration {
   publicKey          String   // Base64 X.509 SPKI (EC P-256)
   attestationChain   String[] // Base64 DER certificates, leaf first, as received
   /// Result of parsing the chain at registration: PARSED | KEY_MISMATCH | UNPARSEABLE.
-  /// Not a verification against the Google attestation root.
+  /// The verification result is attestationVerdict (+ attestationDetails).
   attestationStatus  String
   /// verified | unverified | software-only — see AttestationVerdict in src/crypto/ecdsa.ts.
-  /// Recorded only; registration is not rejected on it (yet).
+  /// Checked against the application's attestationPolicy.
   attestationVerdict String   @default("unverified")
+  /// The device signed a one-time server challenge with this key at its last registration.
+  possessionVerified Boolean  @default(false)
   attestationDetails Json
   sdkVersion         String
   createdAt          DateTime @default(now())

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { attestationExtension, attestationSecurityLevel } from "./keyAttestation";
+import { attestationExtension, KeyDescriptionInfo, parseKeyDescription } from "./keyAttestation";
+import { attestationTrust, isTrustedRoot, normalizeSerial } from "./attestationTrust";
 
 /**
  * ECDSA P-256 (ES256) signature verification for evidence envelopes.
@@ -95,17 +96,20 @@ const KEY_ATTESTATION_OID_DER = Buffer.from([0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04,
 export type AttestationStatus = "PARSED" | "KEY_MISMATCH" | "UNPARSEABLE";
 
 /**
- * Recorded on the device row; registration is never rejected because of it (yet).
- * - `verified`: chain parses, leaf is the registered key, each certificate is
- *   signed by the next, more than one certificate, and the leaf's attestation
- *   extension reports a hardware security level (TEE or StrongBox).
- * - `software-only`: chain parses and the leaf is the registered key, but there
- *   is no hardware attestation (no extension, Software level, or a single
- *   self-signed certificate).
+ * Recorded on the device row; the application's attestation policy decides
+ * whether a registration needs `verified` (see devices/registration.ts).
+ * - `verified`: the chain parses, its leaf is the registered key, each
+ *   certificate is signed by the next and ends at a Google hardware
+ *   attestation root, the intermediate and root certificates are within
+ *   their validity at registration time, none is on the revocation list
+ *   (when the list could be checked), and the leaf's attestation extension
+ *   reports a hardware security level (TEE or StrongBox).
+ * - `software-only`: the chain parses and the leaf is the registered key,
+ *   but there is no hardware attestation (no extension, Software level, or
+ *   a single self-signed certificate).
  * - `unverified`: anything else (unparseable, different key, broken chain,
+ *   a root other than Google's, an expired or revoked certificate,
  *   unreadable extension).
- * Not yet checked: that the chain ends at a Google attestation root
- * (`rootVerified` stays false).
  */
 export type AttestationVerdict = "verified" | "unverified" | "software-only";
 
@@ -123,18 +127,41 @@ export interface AttestationInspection {
   selfSignedOnly: boolean;
   /** Leaf carries the Android key attestation extension (1.3.6.1.4.1.11129.2.1.17). */
   hasKeyAttestationExtension: boolean;
-  /** Always false for now: the chain is not yet checked against the Google attestation roots. */
-  rootVerified: false;
+  /** The linked chain ends at a Google hardware attestation root (by public key). */
+  rootVerified: boolean;
+  /** Every certificate but the leaf is valid at registration time (leaf validity is not meaningful on Android). */
+  validityOk: boolean;
+  /** The revocation list was available and checked. */
+  revocationChecked: boolean;
+  /** Serial numbers in the chain that the revocation list names. */
+  revokedSerials: string[];
+  /** Read from the leaf's KeyDescription; trustworthy only when `rootVerified`. */
+  attestedPackages: string[];
+  attestedSigningCertSha256: string[];
+  attestationChallengeHex: string | null;
+  deviceLocked: boolean | null;
+  verifiedBootState: string | null;
+  osPatchLevel: number | null;
   error?: string;
 }
 
+export interface InspectOptions {
+  /** Trusted roots (default: Google's). */
+  roots?: crypto.X509Certificate[];
+  /** Revocation list entries; `null` when the list is not available. */
+  revoked?: Map<string, string> | null;
+  /** Time of the check (validity). Default: now. */
+  now?: Date;
+}
+
 /**
- * Parses an attestation chain (Base64 DER, leaf first) and reports what it
- * shows about [spkiDer]. Recording only — this does not decide whether the
- * key is trusted; verification against the Google attestation roots and the
- * extension's boot-state fields is a later, separate check.
+ * Parses and verifies an attestation chain (Base64 DER, leaf first) for
+ * [spkiDer]. Pure: the revocation list is passed in (see
+ * crypto/attestationTrust.ts for fetching it).
  */
-export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]): AttestationInspection {
+export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[], options: InspectOptions = {}): AttestationInspection {
+  const roots = options.roots ?? attestationTrust.roots;
+  const now = options.now ?? new Date();
   const base: AttestationInspection = {
     verdict: "unverified",
     status: "UNPARSEABLE",
@@ -145,6 +172,15 @@ export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]):
     selfSignedOnly: false,
     hasKeyAttestationExtension: false,
     rootVerified: false,
+    validityOk: false,
+    revocationChecked: false,
+    revokedSerials: [],
+    attestedPackages: [],
+    attestedSigningCertSha256: [],
+    attestationChallengeHex: null,
+    deviceLocked: null,
+    verifiedBootState: null,
+    osPatchLevel: null,
   };
   if (chainBase64.length === 0) return { ...base, error: "empty chain" };
 
@@ -167,22 +203,37 @@ export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]):
   } catch {
     chainLinked = false;
   }
+  const last = certs[certs.length - 1];
+  let rootSelfSigned = false;
+  try {
+    rootSelfSigned = last.verify(last.publicKey);
+  } catch {
+    rootSelfSigned = false;
+  }
+  const rootVerified = chainLinked && certs.length > 1 && rootSelfSigned && isTrustedRoot(last, roots);
+
+  const nowMs = now.getTime();
+  const validityOk = certs.slice(1).every((c) => Date.parse(c.validFrom) <= nowMs && nowMs <= Date.parse(c.validTo));
+
+  const revoked = options.revoked ?? null;
+  const revokedSerials = revoked ? certs.map((c) => normalizeSerial(c.serialNumber)).filter((s) => revoked.has(s)) : [];
 
   let extension: Buffer | null = null;
-  let securityLevel: number | null = null;
+  let description: KeyDescriptionInfo | null = null;
   let extensionError: string | undefined;
   try {
     extension = attestationExtension(leaf.raw);
-    if (extension) securityLevel = attestationSecurityLevel(extension);
+    if (extension) description = parseKeyDescription(extension);
   } catch (err) {
     extensionError = err instanceof Error ? err.message : "attestation extension unreadable";
   }
+  const securityLevel = description?.attestationSecurityLevel ?? null;
   const selfSignedOnly = certs.length === 1 && chainLinked;
 
   let verdict: AttestationVerdict;
   if (!leafMatchesKey || !chainLinked || extensionError) verdict = "unverified";
   else if (selfSignedOnly || extension === null || securityLevel === 0) verdict = "software-only";
-  else if (securityLevel === 1 || securityLevel === 2) verdict = "verified";
+  else if ((securityLevel === 1 || securityLevel === 2) && rootVerified && validityOk && revokedSerials.length === 0) verdict = "verified";
   else verdict = "unverified";
 
   return {
@@ -194,6 +245,16 @@ export function inspectAttestationChain(spkiDer: Buffer, chainBase64: string[]):
     chainLinked,
     selfSignedOnly,
     hasKeyAttestationExtension: extension !== null || leaf.raw.includes(KEY_ATTESTATION_OID_DER),
+    rootVerified,
+    validityOk,
+    revocationChecked: revoked !== null,
+    revokedSerials,
+    attestedPackages: description?.attestedPackages ?? [],
+    attestedSigningCertSha256: description?.attestedSigningCertSha256 ?? [],
+    attestationChallengeHex: description?.attestationChallengeHex ?? null,
+    deviceLocked: description?.deviceLocked ?? null,
+    verifiedBootState: description?.verifiedBootState ?? null,
+    osPatchLevel: description?.osPatchLevel ?? null,
     ...(extensionError ? { error: extensionError } : {}),
   };
 }

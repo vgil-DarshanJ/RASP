@@ -82,6 +82,8 @@ export interface DeviceKeyRecord {
   lastCounter: bigint;
   /** Signing certificate SHA-256 reported at registration (uppercase hex), if any. */
   signingCertSha256?: string | null;
+  /** `false` when the application requires hardware attestation and this key falls short (devices/attestationPolicy.ts). */
+  meetsAttestationPolicy?: boolean;
 }
 
 export interface NewEnvelopeEvent {
@@ -178,7 +180,9 @@ async function recordHeartbeat(
  * 1. Body parses and has the envelope fields → else 400.
  * 2. `deviceKeyId` is a registered key → else 401 UNKNOWN_DEVICE_KEY;
  *    registered to the calling application → else 403; same `appId` it was
- *    registered for → else 403.
+ *    registered for → else 403; meets the application's attestation policy
+ *    → else 401 DEVICE_NOT_ATTESTED (the SDK registers again, proving
+ *    possession, and retries once).
  * 3. ECDSA P-256 signature over the canonical JSON of every field except
  *    `signature` verifies with that key → else 401.
  * 3a. Only `location_heartbeat` results (Task 9.3) → the device's latest
@@ -224,6 +228,7 @@ export async function processEnvelope(args: {
   if (!device) return reject(401, "UNKNOWN_DEVICE_KEY");
   if (device.applicationId !== applicationId) return reject(403, "DEVICE_KEY_MISMATCH");
   if (device.appId !== envelope.appId) return reject(403, "APP_ID_MISMATCH");
+  if (device.meetsAttestationPolicy === false) return reject(401, "DEVICE_NOT_ATTESTED");
 
   // Verified over the body as received, minus `signature` — not over the
   // schema output — so it covers every field the device signed.

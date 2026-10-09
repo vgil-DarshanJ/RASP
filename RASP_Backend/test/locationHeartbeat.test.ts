@@ -291,7 +291,7 @@ describe("POST /v1/events over HTTP", () => {
     }
     db = new FakeDatabase();
     db.insert("organization", { id: "org-1", name: "Bank Org" });
-    db.insert("application", { id: "app-1", name: "Bank App", platform: "FLUTTER", organizationId: "org-1" });
+    db.insert("application", { id: "app-1", name: "Bank App", platform: "FLUTTER", organizationId: "org-1", legacyIngestionEnabled: true });
     db.insert("apiCredential", { id: "cred-1", applicationId: "app-1", apiKey: "rasp_live_cred1", apiSecretEncrypted: encryptSecret(SECRET) });
     db.insert("deviceRegistration", {
       id: "reg-1", applicationId: "app-1", appId: device.appId, deviceId: "phone-1", deviceKeyId: device.deviceKeyId,
@@ -368,5 +368,32 @@ describe("POST /v1/events over HTTP", () => {
     assert.equal(row.applicationId, "app-1");
     assert.equal(row.longitude, 79.038);
     assert.equal(db.rows("deviceLocationPoint").filter((p) => p.deviceId === "phone-1").length, 1);
+  });
+
+  // F-14: per-application switch for legacy batches; attestation policy on envelopes.
+  test("legacy batches are refused with 403 when the application has legacy ingestion off", async () => {
+    const app = db.rows("application").find((a) => a.id === "app-1")!;
+    app.legacyIngestionEnabled = false;
+    try {
+      const res = await post(JSON.stringify({ events: [legacy({ location_opt_in: false })] }), true);
+      assert.deepEqual(res, { status: 403, body: { error: "LEGACY_INGESTION_DISABLED" } });
+    } finally {
+      app.legacyIngestionEnabled = true;
+    }
+  });
+
+  test("REQUIRE_HARDWARE: an envelope from a key without verified attestation gets 401 DEVICE_NOT_ATTESTED", async () => {
+    const app = db.rows("application").find((a) => a.id === "app-1")!;
+    app.attestationPolicy = "REQUIRE_HARDWARE";
+    try {
+      const now = Date.now();
+      const { body } = signEnvelope(device, now, {
+        monotonicCounter: 50, detectorResults: [heartbeat(heartbeatEvidence(21.045, 79.038, false, now - 5_000), now)],
+      });
+      const res = await post(body, false);
+      assert.deepEqual(res, { status: 401, body: { error: "DEVICE_NOT_ATTESTED" } });
+    } finally {
+      app.attestationPolicy = "RECORD";
+    }
   });
 });

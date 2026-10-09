@@ -59,7 +59,7 @@ const DEFAULTS: Record<string, () => Row> = {
   user: () => ({ role: "OWNER", createdAt: new Date(), tokenVersion: 0 }),
   application: () => ({
     createdAt: new Date(), archivedAt: null, expectedSigningCertSha256: null, ipBlockedCountries: [],
-    ipAllowedCountries: [], accountHashSalt: null, riskRules: null,
+    ipAllowedCountries: [], accountHashSalt: null, riskRules: null, attestationPolicy: "RECORD", legacyIngestionEnabled: false,
   }),
   apiCredential: () => ({ status: "ACTIVE", createdAt: new Date(), rotatedAt: null, revokedAt: null, deletedAt: null }),
   credentialAuditLog: () => ({ performedAt: new Date(), ipAddress: null }),

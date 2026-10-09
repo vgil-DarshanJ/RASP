@@ -203,7 +203,7 @@ before(async () => {
   db.insert("organization", { id: "org-2", name: "Other Org" });
   db.insert("user", { id: "u-owner", email: "owner@example.test", passwordHash: bcrypt.hashSync(OWNER_PASSWORD, 4), role: "OWNER", organizationId: "org-1" });
   db.insert("user", { id: "u-member", email: "member@example.test", passwordHash: bcrypt.hashSync(MEMBER_PASSWORD, 4), role: "MEMBER", organizationId: "org-1" });
-  db.insert("application", { id: "app-1", name: "Bank App", platform: "FLUTTER", organizationId: "org-1", accountHashSalt: SALT1 });
+  db.insert("application", { id: "app-1", name: "Bank App", platform: "FLUTTER", organizationId: "org-1", accountHashSalt: SALT1, legacyIngestionEnabled: true });
   db.insert("application", { id: "app-legacy", name: "Legacy App", platform: "ANDROID_NATIVE", organizationId: "org-1" });
   db.insert("application", { id: "app-legacy-2", name: "Legacy App 2", platform: "ANDROID_NATIVE", organizationId: "org-1" });
   db.insert("application", { id: "app-other", name: "Other Bank", platform: "FLUTTER", organizationId: "org-2", accountHashSalt: SALT_OTHER });
@@ -459,6 +459,9 @@ test("SDK endpoints: signature and validation errors carry no secret", async () 
   await call("POST /v1/devices/register", "/v1/devices/register", 401, {
     as: "none", rawBody: registration, headers: hmacHeaders("rasp_live_cred1", null, registration),
   });
+  await call("POST /v1/devices/challenge", "/v1/devices/challenge", 401, { as: "none", rawBody: "{}", headers: hmacHeaders("rasp_live_cred1", null, "{}") });
+  const challenge = await call("POST /v1/devices/challenge", "/v1/devices/challenge", 200, { as: "none", rawBody: "{}", headers: hmacHeaders("rasp_live_cred1", SECRET1, "{}") });
+  assert.equal(typeof challenge.body.challenge, "string");
   await call("GET /v1/ip-risk", "/v1/ip-risk", 401, { as: "none", headers: hmacHeaders("rasp_live_cred1", null, "") });
   await call("POST /v1/risk/events", "/v1/risk/events", 400, { as: "none", body: { riskEnvelopeVersion: 1 }, headers: { "X-Api-Key": "rasp_live_cred1" } });
   const unknownDevice = signRiskEnvelope(makeDevice("com.example.bank"), Date.now());

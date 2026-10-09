@@ -124,6 +124,10 @@ const securityPatchSchema = z
     ipAllowedCountries: z.array(z.string().max(10)).max(250).optional(),
     /** Fraud-risk rule thresholds: any subset (merged over the current ones); null resets to defaults. */
     riskRules: riskRulesPatchSchema.nullable().optional(),
+    /** RECORD | REQUIRE_HARDWARE — see src/devices/attestationPolicy.ts. */
+    attestationPolicy: z.enum(["RECORD", "REQUIRE_HARDWARE"]).optional(),
+    /** Whether POST /v1/events still accepts legacy HMAC batches. */
+    legacyIngestionEnabled: z.boolean().optional(),
   })
   .strict();
 
@@ -132,6 +136,8 @@ export type AppSecurityPatch = {
   ipBlockedCountries?: string[];
   ipAllowedCountries?: string[];
   riskRules?: RiskRulesPatch | null;
+  attestationPolicy?: "RECORD" | "REQUIRE_HARDWARE";
+  legacyIngestionEnabled?: boolean;
 };
 
 /**
@@ -166,6 +172,8 @@ export function parseAppSecurityPatch(body: unknown):
     data[field] = [...countrySet(list)];
   }
   if (input.riskRules !== undefined) data.riskRules = input.riskRules;
+  if (input.attestationPolicy !== undefined) data.attestationPolicy = input.attestationPolicy;
+  if (input.legacyIngestionEnabled !== undefined) data.legacyIngestionEnabled = input.legacyIngestionEnabled;
   return { ok: true, data };
 }
 
@@ -175,6 +183,8 @@ export interface AppSecuritySettings {
   ipBlockedCountries: string[];
   ipAllowedCountries: string[];
   riskRules: RiskRulesConfig;
+  attestationPolicy: "RECORD" | "REQUIRE_HARDWARE";
+  legacyIngestionEnabled: boolean;
 }
 
 export interface SettingsChange {
@@ -198,6 +208,8 @@ export function applySecurityPatch(current: AppSecuritySettings, patch: AppSecur
     ...(patch.riskRules !== undefined && {
       riskRules: patch.riskRules === null ? structuredClone(DEFAULT_RISK_RULES) : mergeRiskRules(current.riskRules, patch.riskRules),
     }),
+    ...(patch.attestationPolicy !== undefined && { attestationPolicy: patch.attestationPolicy }),
+    ...(patch.legacyIngestionEnabled !== undefined && { legacyIngestionEnabled: patch.legacyIngestionEnabled }),
   };
   const changes: SettingsChange[] = [];
   for (const field of Object.keys(next) as (keyof AppSecuritySettings)[]) {
@@ -210,6 +222,7 @@ export function applySecurityPatch(current: AppSecuritySettings, patch: AppSecur
 
 const settingsSelect = {
   id: true, expectedSigningCertSha256: true, ipBlockedCountries: true, ipAllowedCountries: true, riskRules: true,
+  attestationPolicy: true, legacyIngestionEnabled: true,
 } as const;
 
 function currentSettings(row: {
@@ -217,12 +230,16 @@ function currentSettings(row: {
   ipBlockedCountries?: string[];
   ipAllowedCountries?: string[];
   riskRules?: unknown;
+  attestationPolicy?: "RECORD" | "REQUIRE_HARDWARE";
+  legacyIngestionEnabled?: boolean;
 }): AppSecuritySettings {
   return {
     expectedSigningCertSha256: row.expectedSigningCertSha256 ?? null,
     ipBlockedCountries: row.ipBlockedCountries ?? [],
     ipAllowedCountries: row.ipAllowedCountries ?? [],
     riskRules: effectiveRiskRules(row.riskRules),
+    attestationPolicy: row.attestationPolicy ?? "RECORD",
+    legacyIngestionEnabled: row.legacyIngestionEnabled ?? false,
   };
 }
 
@@ -290,7 +307,9 @@ appsRouter.get("/:id/settings-audit", settingsRateLimit, async (req: AuthedReque
  * - `expectedSigningCertSha256`: a tamper result reporting another hash
  *   raises a "tamper_signing_mismatch" alert (high);
  * - `ipBlockedCountries` / `ipAllowedCountries`: GET /v1/ip-risk policy;
- * - `riskRules`: fraud-risk rule thresholds (risk/rules.ts), validated ranges.
+ * - `riskRules`: fraud-risk rule thresholds (risk/rules.ts), validated ranges;
+ * - `attestationPolicy`: RECORD | REQUIRE_HARDWARE (devices/attestationPolicy.ts);
+ * - `legacyIngestionEnabled`: whether legacy HMAC event batches are accepted.
  * Every changed field is written to the settings audit log (who, when, old,
  * new) in the same transaction. MEMBER → 403 FORBIDDEN_ROLE.
  */
@@ -314,6 +333,8 @@ appsRouter.patch("/:id", settingsRateLimit, async (req: AuthedRequest, res) => {
     ...(patch.data.riskRules !== undefined && {
       riskRules: patch.data.riskRules === null ? Prisma.DbNull : (next.riskRules as unknown as Prisma.InputJsonValue),
     }),
+    ...(patch.data.attestationPolicy !== undefined && { attestationPolicy: next.attestationPolicy }),
+    ...(patch.data.legacyIngestionEnabled !== undefined && { legacyIngestionEnabled: next.legacyIngestionEnabled }),
   };
   const [updated] = await prisma.$transaction([
     prisma.application.update({
@@ -322,6 +343,7 @@ appsRouter.patch("/:id", settingsRateLimit, async (req: AuthedRequest, res) => {
       select: {
         id: true, name: true, platform: true,
         expectedSigningCertSha256: true, ipBlockedCountries: true, ipAllowedCountries: true, riskRules: true,
+        attestationPolicy: true, legacyIngestionEnabled: true,
       },
     }),
     prisma.applicationSettingsAuditLog.createMany({

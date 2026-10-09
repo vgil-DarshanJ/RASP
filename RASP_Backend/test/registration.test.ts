@@ -3,7 +3,7 @@
 // (node:crypto X509Certificate) on openssl-generated certificates
 // (test/fixtures/make-attestation-certs.sh).
 // Double: MemoryRegistrationRepository instead of Postgres (see test/support.ts).
-import { test, describe } from "node:test";
+import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -11,9 +11,11 @@ import crypto from "node:crypto";
 import { registerDevice } from "../src/devices/registration";
 import { computeDeviceKeyId, inspectAttestationChain } from "../src/crypto/ecdsa";
 import { MemoryRegistrationRepository } from "./support";
+import { attestationTrust } from "../src/crypto/attestationTrust";
 
 const certs = JSON.parse(readFileSync(path.join(__dirname, "fixtures/attestation-certs.json"), "utf8"));
-const NOW = new Date(Date.UTC(2026, 9, 1, 12, 0, 0));
+// Inside the validity of the test CA (created 2026-10-03).
+const NOW = new Date(Date.UTC(2026, 9, 5, 12, 0, 0));
 
 const body = (overrides: Record<string, unknown> = {}) => ({
   appId: "com.example.bank",
@@ -116,7 +118,12 @@ describe("device registration", () => {
     assert.equal(out.body.error, "INVALID_REGISTER_BODY");
   });
 
-  test("attestation verdict is recorded on the row and shown in the response", async () => {
+  test("attestation verdict is recorded on the row and shown in the response (test CA trusted as a root)", async () => {
+    const googleRoots = attestationTrust.roots;
+    attestationTrust.roots = [new crypto.X509Certificate(Buffer.from(certs.attested[1], "base64"))];
+    after(() => {
+      attestationTrust.roots = googleRoots;
+    });
     const cases: Array<[string, unknown, string]> = [
       ["TEE attestation chain", certs.attested, "verified"],
       ["Software-level attestation", certs.attestedSoftware, "software-only"],

@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
+import { POLICY_SELECT, rowMeetsPolicy } from "../devices/attestationPolicy";
+import { revocationCheckEnabled } from "../crypto/attestationTrust";
 import { deviceColumns, EnvelopeRepository, StoreResult } from "./envelope";
 import { locationColumns } from "./location";
 
@@ -15,13 +17,19 @@ import { locationColumns } from "./location";
  */
 export const prismaEnvelopeRepository: EnvelopeRepository = {
   async findDeviceKey(deviceKeyId) {
-    return prisma.deviceRegistration.findUnique({
+    const row = await prisma.deviceRegistration.findUnique({
       where: { deviceKeyId },
       select: {
-        id: true, applicationId: true, appId: true, deviceId: true, publicKey: true, lastCounter: true,
-        signingCertSha256: true,
+        id: true, applicationId: true, deviceId: true, publicKey: true, lastCounter: true,
+        signingCertSha256: true, ...POLICY_SELECT,
       },
     });
+    if (!row) return null;
+    const { application, attestationVerdict, possessionVerified, attestationDetails, ...device } = row;
+    return {
+      ...device,
+      meetsAttestationPolicy: rowMeetsPolicy({ appId: row.appId, attestationVerdict, possessionVerified, attestationDetails, application }, revocationCheckEnabled()),
+    };
   },
 
   async findEnvelopeByEventId(eventId) {

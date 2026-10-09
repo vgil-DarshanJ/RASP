@@ -84,7 +84,14 @@ export class MemoryRegistrationRepository implements RegistrationRepository {
 
   async findByKeyId(deviceKeyId: string) {
     const r = this.rows.find((x) => x.deviceKeyId === deviceKeyId);
-    return r ? { id: r.id, applicationId: r.applicationId, appId: r.appId, deviceKeyId: r.deviceKeyId, attestationStatus: r.attestationStatus, attestationVerdict: r.attestationVerdict } : null;
+    return r
+      ? {
+          id: r.id, applicationId: r.applicationId, appId: r.appId, deviceKeyId: r.deviceKeyId,
+          attestationStatus: r.attestationStatus, attestationVerdict: r.attestationVerdict,
+          // Same columns as prismaRegistrationRepository.
+          possessionVerified: r.input.possessionVerified ?? false, attestationDetails: r.input.attestation,
+        }
+      : null;
   }
 
   async create(input: NewRegistration) {

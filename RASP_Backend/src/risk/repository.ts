@@ -1,5 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
+import { POLICY_SELECT, rowMeetsPolicy } from "../devices/attestationPolicy";
+import { revocationCheckEnabled } from "../crypto/attestationTrust";
 import { RiskEventRepository, StoreRiskEventInput, StoreRiskResult } from "./riskEvents";
 import { AccountHistory, historyWindows } from "./rules";
 
@@ -100,10 +102,16 @@ async function loadHistory(tx: Tx, input: StoreRiskEventInput): Promise<AccountH
  */
 export const prismaRiskEventRepository: RiskEventRepository = {
   async findDeviceKey(deviceKeyId) {
-    return prisma.deviceRegistration.findUnique({
+    const row = await prisma.deviceRegistration.findUnique({
       where: { deviceKeyId },
-      select: { id: true, applicationId: true, appId: true, deviceId: true, publicKey: true, lastRiskCounter: true },
+      select: { id: true, applicationId: true, deviceId: true, publicKey: true, lastRiskCounter: true, ...POLICY_SELECT },
     });
+    if (!row) return null;
+    const { application, attestationVerdict, possessionVerified, attestationDetails, ...device } = row;
+    return {
+      ...device,
+      meetsAttestationPolicy: rowMeetsPolicy({ appId: row.appId, attestationVerdict, possessionVerified, attestationDetails, application }, revocationCheckEnabled()),
+    };
   },
 
   async findRiskRules(applicationId) {
