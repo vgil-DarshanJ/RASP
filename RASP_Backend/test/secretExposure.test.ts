@@ -37,6 +37,7 @@ import { ingestionRouter } from "../src/ingestion/routes";
 import { ipRiskRouter } from "../src/ipRisk/routes";
 import { riskRouter } from "../src/risk/routes";
 import { reputationRouter } from "../src/reputation/routes";
+import { privacyRouter } from "../src/privacy/deviceErasure";
 import { sdkDistributionRouter } from "../src/sdk-distribution/routes";
 import { webhooksRouter } from "../src/webhooks/routes";
 import { redis } from "../src/redis/client";
@@ -450,6 +451,13 @@ test("dashboard: every view, the search and the CSV export carry no secret", asy
   assert.deepEqual((search.body.applications as Row[]).map((a) => a.id), ["app-1"]);
 });
 
+// ── privacy ───────────────────────────────────────────────────────────────
+
+test("privacy: erasing an unknown device answers 404 and carries no secret", async () => {
+  await call("DELETE /v1/privacy/applications/:applicationId/devices/:deviceId", "/v1/privacy/applications/app-1/devices/no-such-device", 404);
+  await call("DELETE /v1/privacy/applications/:applicationId/devices/:deviceId", "/v1/privacy/applications/app-1/devices/no-such-device", 403, { as: "member" });
+});
+
 // ── SDK-facing endpoints: error responses ────────────────────────────────
 
 test("SDK endpoints: signature and validation errors carry no secret", async () => {
@@ -520,7 +528,7 @@ test("every route of every router was scanned above", () => {
     ["/v1/auth", authRouter], ["/v1/apps", appsRouter], ["/v1/credentials", credentialsRouter],
     ["/v1/sdk", sdkDistributionRouter], ["/v1/events", ingestionRouter], ["/v1/devices", devicesRouter],
     ["/v1/dashboard", dashboardRouter], ["/v1/webhooks", webhooksRouter], ["/v1/ip-risk", ipRiskRouter],
-    ["/v1/risk", riskRouter], ["/v1/reputation", reputationRouter],
+    ["/v1/risk", riskRouter], ["/v1/reputation", reputationRouter], ["/v1/privacy", privacyRouter],
   ];
   const routes = new Set<string>(["GET /healthz"]);
   for (const [prefixPath, router] of mounted) {

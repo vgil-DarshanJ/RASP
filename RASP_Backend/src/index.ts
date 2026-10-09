@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { createApp } from "./app";
+import { startRetentionSchedule } from "./privacy/retention";
 
 const requiredEnv = ["DATABASE_URL", "REDIS_URL", "JWT_SECRET"];
 const missing = requiredEnv.filter((key) => !process.env[key]);
@@ -15,6 +16,9 @@ const port = Number(process.env.PORT) || 4000;
 const server = app.listen(port, () => {
   console.log(`[rasp-shield-backend] listening on http://localhost:${port}`);
 });
+
+// Daily deletion of data past its retention period, when one is configured.
+startRetentionSchedule();
 
 function shutdown(signal: string) {
   console.log(`[shutdown] received ${signal}, closing server...`);
