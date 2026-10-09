@@ -15,6 +15,8 @@ interface SecuritySettingsResponse {
     ipBlockedCountries: string[];
     ipAllowedCountries: string[];
     riskRules: RiskRules;
+    attestationPolicy: "RECORD" | "REQUIRE_HARDWARE";
+    legacyIngestionEnabled: boolean;
   };
   riskRuleDefaults: RiskRules;
   riskRuleLimits: RuleLimits;
@@ -114,6 +116,8 @@ export default function SecuritySettingsPage() {
   const [blocked, setBlocked] = useState("");
   const [allowed, setAllowed] = useState("");
   const [rules, setRules] = useState<Record<string, string>>({});
+  const [attestationPolicy, setAttestationPolicy] = useState<"RECORD" | "REQUIRE_HARDWARE">("RECORD");
+  const [legacyIngestion, setLegacyIngestion] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -131,6 +135,8 @@ export default function SecuritySettingsPage() {
       setCert(settings.settings.expectedSigningCertSha256 ?? "");
       setBlocked(settings.settings.ipBlockedCountries.join(", "));
       setAllowed(settings.settings.ipAllowedCountries.join(", "));
+      setAttestationPolicy(settings.settings.attestationPolicy ?? "RECORD");
+      setLegacyIngestion(settings.settings.legacyIngestionEnabled ?? false);
       const flat: Record<string, string> = {};
       for (const rule of RULES) {
         for (const f of rule.fields) flat[`${rule.key}.${f.key}`] = String(settings.settings.riskRules[rule.key][f.key]);
@@ -205,6 +211,8 @@ export default function SecuritySettingsPage() {
       }
     }
     if (Object.keys(riskRules).length > 0) body.riskRules = riskRules;
+    if (attestationPolicy !== current.attestationPolicy) body.attestationPolicy = attestationPolicy;
+    if (legacyIngestion !== current.legacyIngestionEnabled) body.legacyIngestionEnabled = legacyIngestion;
     if (Object.keys(body).length === 0) {
       setSaved("Nothing changed.");
       return;
@@ -229,7 +237,7 @@ export default function SecuritySettingsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-ink-900">Security Settings</h1>
         <p className="mt-1 text-sm text-ink-500">
-          {selectedApp?.name} · signing certificate, IP country policy and fraud-risk rule thresholds
+          {selectedApp?.name} · signing certificate, IP country policy, device trust and fraud-risk rule thresholds
         </p>
       </div>
 
@@ -263,6 +271,42 @@ export default function SecuritySettingsPage() {
                 <Label>Allowed countries</Label>
                 <Input value={allowed} onChange={(e) => setAllowed(e.target.value)} disabled={disabled} maxLength={1000} placeholder="e.g. IN — empty = no allow-list" />
                 {errors.allowed && <p className="mt-1 text-xs text-red-600">{errors.allowed}</p>}
+              </div>
+            </div>
+          </Card>
+
+          <Card className="mb-6 p-6">
+            <h2 className="mb-4 text-sm font-semibold text-ink-700">Device trust</h2>
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <Label>Key attestation</Label>
+                <select
+                  aria-label="Key attestation policy"
+                  value={attestationPolicy}
+                  onChange={(e) => setAttestationPolicy(e.target.value as "RECORD" | "REQUIRE_HARDWARE")}
+                  disabled={disabled}
+                  className="w-full rounded-lg border border-ink-200 bg-surface px-2.5 py-2 text-sm text-ink-900 outline-none disabled:opacity-60"
+                >
+                  <option value="RECORD">Record only — accept every device, show its attestation</option>
+                  <option value="REQUIRE_HARDWARE">Require hardware attestation</option>
+                </select>
+                <p className="mt-1 text-xs text-ink-400">
+                  Require: a device registers and reports only with a key in its secure hardware (TEE or StrongBox) that Google’s
+                  attestation confirms, for this app’s package{cert.trim() ? " and signing certificate" : ""}, not revoked, and proven
+                  by signing a one-time challenge. Emulators, software keys and repackaged apps are refused. Turn on after testing
+                  on your target phones.
+                </p>
+              </div>
+              <div>
+                <Label>Legacy event batches</Label>
+                <label className="mt-2 flex items-start gap-2 text-sm text-ink-700">
+                  <input type="checkbox" checked={legacyIngestion} onChange={(e) => setLegacyIngestion(e.target.checked)} disabled={disabled} className="mt-0.5" />
+                  <span>Accept HMAC-signed batches from SDKs without a device key</span>
+                </label>
+                <p className="mt-1 text-xs text-ink-400">
+                  These are authenticated only by the API secret inside the app. Leave off when every app version sends signed
+                  envelopes (SDK 1.1+ with device keys).
+                </p>
               </div>
             </div>
           </Card>
