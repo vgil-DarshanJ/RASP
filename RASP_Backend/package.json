@@ -13,7 +13,8 @@
     "test": "tsx --test \"test/**/*.test.ts\"",
     "seed:map-points": "tsx scripts/seed-map-points.ts",
     "seed:risk-events": "tsx scripts/seed-risk-events.ts",
-    "reputation:keygen": "tsx scripts/reputation-keygen.ts"
+    "reputation:keygen": "tsx scripts/reputation-keygen.ts",
+    "export:severities": "tsx scripts/export-severities.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",

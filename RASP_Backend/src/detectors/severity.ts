@@ -1,11 +1,10 @@
 /**
- * Canonical severity/weight for every detectorId the SDK ships — the
- * backend's own copy of what `FE/lib/alertCatalog.ts` already declares for
- * display purposes. Duplicated on purpose, not imported: this is a
- * separate Node/Express project with its own build, and the two are kept
- * in sync by hand the same way `alertCatalog.ts`'s own header already
- * documents doing for the Flutter/Kotlin SDKs. If a detector is added to
- * one, add it to the other in the same change.
+ * Canonical severity/weight for every detectorId — the single source
+ * (F-26). `npm run export:severities -- <file>...` writes it as JSON for the
+ * dashboard (FE/lib/detectorSeverities.json) and the Flutter plugin
+ * (test/fixtures/detector_severities.json); their tests fail when
+ * alertCatalog.ts or the Dart descriptors disagree with that copy, or the
+ * copy with this table. After a change here, export again.
  *
  * `weight` drives [scoreForDetections] below — our own risk-scoring
  * methodology, not a reproduction of any vendor's proprietary formula.
