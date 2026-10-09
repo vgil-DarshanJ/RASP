@@ -4,7 +4,7 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api-client";
-import { saveSession, StoredSession } from "@/lib/auth";
+import { saveSession, SignInResponse } from "@/lib/auth";
 import { Button, Input, Label, MailIcon, LockIcon, BuildingIcon } from "@/components/ui";
 import { AuthShell } from "@/components/auth-shell";
 
@@ -21,7 +21,7 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
-      const session = await apiFetch<StoredSession>("/v1/auth/register", {
+      const session = await apiFetch<SignInResponse>("/v1/auth/register", {
         method: "POST",
         body: JSON.stringify({ organizationName, email, password }),
       });
@@ -32,6 +32,8 @@ export default function RegisterPage() {
         setError("An account with that email already exists.");
       } else if (err instanceof ApiError && err.status === 400) {
         setError("Please check your details — password must be at least 8 characters.");
+      } else if (err instanceof ApiError && err.status === 429) {
+        setError("Too many sign-ups from this network. Please try again later.");
       } else {
         setError("Something went wrong. Please try again.");
       }

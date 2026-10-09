@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getToken } from "@/lib/auth";
+import { hasSession } from "@/lib/auth";
 import { ShieldEmblem } from "@/components/shield-emblem";
 import {
   ActivityIcon,
@@ -75,7 +75,7 @@ export default function RootPage() {
   const skippedRef = useRef(false);
 
   useEffect(() => {
-    if (getToken()) {
+    if (hasSession()) {
       router.replace("/dashboard");
       return;
     }

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { clearSession, getStoredOrganization, getStoredUser, getToken } from "@/lib/auth";
+import { clearSession, getStoredOrganization, getStoredUser, hasSession, saveSession, StoredSession } from "@/lib/auth";
+import { apiFetch } from "@/lib/api-client";
 import { useHealth } from "@/lib/useHealth";
 import { AppSelectionProvider, useAppSelection } from "@/lib/app-selection";
 import { useIsDark } from "@/lib/useIsDark";
@@ -114,11 +115,14 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!getToken()) {
+    if (!hasSession()) {
       router.replace("/login");
       return;
     }
     setReady(true);
+    // The cookie decides: an expired or revoked session gets 401 here and
+    // apiFetch sends the browser to /login. A role change shows up at once.
+    apiFetch<StoredSession>("/v1/auth/me").then(saveSession).catch(() => {});
   }, [router]);
 
   const health = useHealth();
@@ -143,7 +147,9 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
     unreachable: "red",
   };
 
-  function logout() {
+  async function logout() {
+    // Revokes every token of this user on the backend and removes the cookie.
+    await apiFetch("/v1/auth/logout", { method: "POST" }).catch(() => {});
     clearSession();
     router.replace("/login");
   }

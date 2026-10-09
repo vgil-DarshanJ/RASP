@@ -4,7 +4,7 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api-client";
-import { saveSession, StoredSession } from "@/lib/auth";
+import { saveSession, SignInResponse } from "@/lib/auth";
 import { Button, Input, Label, MailIcon, LockIcon } from "@/components/ui";
 import { AuthShell } from "@/components/auth-shell";
 
@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const session = await apiFetch<StoredSession>("/v1/auth/login", {
+      const session = await apiFetch<SignInResponse>("/v1/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
@@ -29,6 +29,14 @@ export default function LoginPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError("Incorrect email or password.");
+      } else if (err instanceof ApiError && err.status === 429) {
+        const body = err.body as { error?: string; retryAfterSeconds?: number } | null;
+        const minutes = Math.max(1, Math.ceil((body?.retryAfterSeconds ?? 900) / 60));
+        setError(
+          body?.error === "ACCOUNT_TEMPORARILY_LOCKED"
+            ? `Too many failed attempts for this account. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`
+            : `Too many sign-in attempts from this network. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`,
+        );
       } else {
         setError("Something went wrong. Please try again.");
       }

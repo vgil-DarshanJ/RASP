@@ -1,6 +1,6 @@
 "use client";
 
-import { clearSession, getToken } from "./auth";
+import { clearSession } from "./auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
 
@@ -11,7 +11,8 @@ export class ApiError extends Error {
 }
 
 /**
- * Thin fetch wrapper: attaches the JWT if present, throws a typed
+ * Thin fetch wrapper: sends the session cookie (`credentials: "include"`;
+ * the token itself is httpOnly and never visible here), throws a typed
  * `ApiError` on any non-2xx response (never lets a caller silently treat
  * a failed request as success by forgetting to check `res.ok`), and on a
  * 401 clears the stored session AND sends the browser to `/login` —
@@ -27,12 +28,10 @@ export async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = getToken();
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "include" });
 
   if (res.status === 401) {
     clearSession();
@@ -53,10 +52,7 @@ export async function apiFetch<T>(
 /** Non-JSON download (the SDK zip) — returns the raw Response so the
  *  caller can trigger a browser save via a Blob URL. */
 export async function apiDownload(path: string): Promise<Response> {
-  const token = getToken();
-  const headers = new Headers();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(`${API_BASE}${path}`, { headers });
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "include" });
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => null));
   return res;
 }
