@@ -42,12 +42,23 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
+    // The selected application was archived (or the list is stale): ask the
+    // app picker to reload and choose a valid one. The page's own request
+    // never settles, so it shows its loading state instead of an error
+    // screen, then loads again for the new selection.
+    if (res.status === 404 && (body as { error?: string } | null)?.error === "APPLICATION_NOT_FOUND" && typeof window !== "undefined" && !(options.method && options.method !== "GET")) {
+      window.dispatchEvent(new Event(APPLICATION_GONE_EVENT));
+      return new Promise<T>(() => {});
+    }
     throw new ApiError(res.status, body);
   }
 
   if (res.status === 204) return undefined as T;
   return res.json();
 }
+
+/** Fired when the backend says the selected application does not exist (any more). */
+export const APPLICATION_GONE_EVENT = "rasp:application-gone";
 
 /** Non-JSON download (the SDK zip) — returns the raw Response so the
  *  caller can trigger a browser save via a Blob URL. */

@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { apiDownload, apiFetch } from "@/lib/api-client";
+import { useAppSelection } from "@/lib/app-selection";
 import {
   Badge,
   Button,
@@ -68,6 +69,8 @@ export default function AppsPage() {
   const [deleting, setDeleting] = useState(false);
   const [detailApp, setDetailApp] = useState<Application | null>(null);
 
+  const { refresh: refreshSelection } = useAppSelection();
+
   async function refresh() {
     const [catalogRes, appsRes] = await Promise.all([
       apiFetch<{ platforms: SdkCatalogEntry[] }>("/v1/sdk/catalog"),
@@ -75,6 +78,8 @@ export default function AppsPage() {
     ]);
     setCatalog(catalogRes.platforms);
     setApps(appsRes.applications);
+    // Keep the "Viewing" picker in step: new apps appear, archived ones go.
+    await refreshSelection().catch(() => {});
   }
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiFetch } from "@/lib/api-client";
+import { apiFetch, APPLICATION_GONE_EVENT } from "@/lib/api-client";
 
 export interface Application {
   id: string;
@@ -55,6 +55,22 @@ export function AppSelectionProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     load();
+    // Apps created or archived in another tab (or by a colleague) show up
+    // when this tab is used again.
+    const onFocus = () => {
+      if (document.visibilityState === "visible") load().catch(() => {});
+    };
+    const onGone = () => {
+      load().catch(() => {});
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener(APPLICATION_GONE_EVENT, onGone);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener(APPLICATION_GONE_EVENT, onGone);
+    };
   }, [load]);
 
   const setSelectedAppId = useCallback((id: string) => {
