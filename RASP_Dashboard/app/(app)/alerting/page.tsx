@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { webhookErrorMessage } from "@/lib/webhookErrors";
 import { apiFetch } from "@/lib/api-client";
 import {
   BellIcon,
@@ -75,7 +76,7 @@ export default function AlertingPage() {
       setConfig(res.webhook);
       if (res.secret) setRevealedSecret(res.secret);
     } catch (err: any) {
-      setError(err?.body?.error ?? "Failed to save webhook configuration");
+      setError(webhookErrorMessage(err?.body?.error, "Failed to save webhook configuration"));
     } finally {
       setSaving(false);
     }
@@ -85,6 +86,7 @@ export default function AlertingPage() {
     if (!selectedAppId) return;
     if (!confirm("Rotate the webhook signing secret? Any endpoint verifying the old signature will start rejecting deliveries until updated.")) return;
     setRotating(true);
+    setError(null);
     try {
       const res = await apiFetch<{ webhook: WebhookConfig; secret: string }>(
         `/v1/webhooks/applications/${selectedAppId}/rotate-secret`,
@@ -92,6 +94,8 @@ export default function AlertingPage() {
       );
       setConfig(res.webhook);
       setRevealedSecret(res.secret);
+    } catch (err: any) {
+      setError(webhookErrorMessage(err?.body?.error, "Failed to rotate the signing secret"));
     } finally {
       setRotating(false);
     }
@@ -100,12 +104,15 @@ export default function AlertingPage() {
   async function handleTest() {
     if (!selectedAppId) return;
     setTesting(true);
+    setError(null);
     try {
       const res = await apiFetch<{ webhook: WebhookConfig | null }>(
         `/v1/webhooks/applications/${selectedAppId}/test`,
         { method: "POST" },
       );
       setConfig(res.webhook);
+    } catch (err: any) {
+      setError(webhookErrorMessage(err?.body?.error, "Failed to send the test alert"));
     } finally {
       setTesting(false);
     }
@@ -114,7 +121,12 @@ export default function AlertingPage() {
   async function handleDelete() {
     if (!selectedAppId) return;
     if (!confirm("Remove this webhook configuration? Alerts will stop being sent for this application.")) return;
-    await apiFetch(`/v1/webhooks/applications/${selectedAppId}`, { method: "DELETE" });
+    try {
+      await apiFetch(`/v1/webhooks/applications/${selectedAppId}`, { method: "DELETE" });
+    } catch (err: any) {
+      setError(webhookErrorMessage(err?.body?.error, "Failed to remove the webhook"));
+      return;
+    }
     setConfig(null);
     setUrl("");
     setEnabled(true);
@@ -161,8 +173,10 @@ export default function AlertingPage() {
           </div>
           <div className="p-6">
             <p className="mb-4 text-sm text-ink-600">
-              This secret signs every webhook delivery (<code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">X-Webhook-Signature</code>,
-              HMAC-SHA256 over the raw JSON body) — verify it on your endpoint before trusting a payload. Shown{" "}
+              This secret signs every webhook delivery: <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">X-Webhook-Signature: v1=…</code>{" "}
+              is HMAC-SHA256 over <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">&lt;X-Webhook-Timestamp&gt;.&lt;raw JSON body&gt;</code>.
+              On your endpoint, recompute it, compare in constant time, reject timestamps older than 5 minutes, and ignore a repeated{" "}
+              <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">X-Webhook-Id</code> (failed deliveries are retried up to 3 times). Shown{" "}
               <strong>once</strong>; if lost, rotate to get a new one.
             </p>
             <div className="relative flex items-center gap-2 rounded-xl bg-ink-950 p-4">
