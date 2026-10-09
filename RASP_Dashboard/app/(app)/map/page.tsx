@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api-client";
 import { useAppSelection } from "@/lib/app-selection";
 import { useIsDark } from "@/lib/useIsDark";
 import { catalogFor } from "@/lib/alertCatalog";
-import { Card, MapPinIcon } from "@/components/ui";
+import { Card, MapPinIcon, SearchIcon } from "@/components/ui";
+import type { DeviceMapFocus } from "@/components/device-map";
 import {
   emptyMapMessage,
+  filterMapPoints,
+  mapPointKey,
   markerColor,
   roundCoord,
   SEVERITY_COLOR,
@@ -51,6 +54,9 @@ export default function DeviceMapPage() {
   const [data, setData] = useState<MapPointsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [query, setQuery] = useState("");
+  const [focus, setFocus] = useState<DeviceMapFocus | null>(null);
+  const mapCardRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,7 +83,10 @@ export default function DeviceMapPage() {
     };
   }, [applicationId, severity, range, showTrail]);
 
-  const points = data?.points ?? null;
+  const allPoints = data?.points ?? null;
+  /** The search applies to both the map and the list. */
+  const points = useMemo(() => (allPoints === null ? null : filterMapPoints(allPoints, query)), [allPoints, query]);
+  const searching = query.trim() !== "";
   const staleAfter = data?.staleAfterMinutes ?? 10;
   const counts = useMemo(() => {
     const c: Record<MapSeverity | "stale", number> = { high: 0, medium: 0, low: 0, none: 0, stale: 0 };
@@ -85,6 +94,11 @@ export default function DeviceMapPage() {
     return c;
   }, [points]);
   const period = RANGES.find((r) => r.value === range)!.label.toLowerCase();
+
+  function showOnMap(key: string) {
+    setFocus((f) => ({ key, nonce: (f?.nonce ?? 0) + 1 }));
+    mapCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   const select = "rounded-lg border border-ink-200 bg-surface px-2.5 py-1.5 text-sm text-ink-900 outline-none";
 
@@ -99,6 +113,19 @@ export default function DeviceMapPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-64">
+          <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400">
+            <SearchIcon size={15} />
+          </span>
+          <input
+            type="search"
+            aria-label="Search devices"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search device ID or app…"
+            className="w-full rounded-lg border border-ink-200 bg-surface py-1.5 pl-8 pr-2.5 text-sm text-ink-900 outline-none placeholder:text-ink-400 focus:border-brand-500"
+          />
+        </div>
         <select aria-label="Application" value={applicationId} onChange={(e) => setApplicationId(e.target.value)} className={select}>
           <option value="">All applications</option>
           {apps.map((app) => (
@@ -140,15 +167,30 @@ export default function DeviceMapPage() {
         </div>
       </div>
 
-      <Card className="mb-4 h-[480px] overflow-hidden p-0">
-        <DeviceMapClient points={points ?? []} dark={isDark} />
-      </Card>
+      <div ref={mapCardRef}>
+        <Card className="mb-4 h-[480px] overflow-hidden p-0">
+          <DeviceMapClient points={points ?? []} dark={isDark} fitKey={query.trim().toLowerCase()} focus={focus} />
+        </Card>
+      </div>
+
+      {allPoints !== null && allPoints.length > 0 && (
+        <p className="mb-2 text-xs text-ink-500">
+          {searching
+            ? `${points?.length ?? 0} of ${allPoints.length} ${allPoints.length === 1 ? "device" : "devices"} match “${query.trim()}”.`
+            : `${allPoints.length} ${allPoints.length === 1 ? "device" : "devices"}.`}{" "}
+          Use Show on map to zoom to one device.
+        </p>
+      )}
 
       <Card className="overflow-hidden">
         {error ? (
           <p className="py-8 text-center text-sm text-red-600">{error}</p>
         ) : points === null ? (
           <p className="py-8 text-center text-sm text-ink-400">Loading…</p>
+        ) : points.length === 0 && searching && (allPoints?.length ?? 0) > 0 ? (
+          <p className="py-8 text-center text-sm text-ink-500" data-testid="map-no-match">
+            No device matches “{query.trim()}”. Search by device ID or application name.
+          </p>
         ) : points.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
             <MapPinIcon size={22} className="text-ink-300" />
@@ -166,12 +208,18 @@ export default function DeviceMapPage() {
                   <th className="py-2.5 pr-4 font-medium">Severity</th>
                   <th className="py-2.5 pr-4 font-medium">Last threat</th>
                   <th className="py-2.5 pr-4 font-medium">Location</th>
-                  <th className="py-2.5 pr-5 font-medium">Last seen</th>
+                  <th className="py-2.5 pr-4 font-medium">Last seen</th>
+                  <th className="py-2.5 pr-5 font-medium">
+                    <span className="sr-only">Map</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {points.map((p, i) => (
-                  <tr key={`${p.applicationId}-${p.deviceId}-${i}`} className="border-b border-ink-50">
+                  <tr
+                    key={`${p.applicationId}-${p.deviceId}-${i}`}
+                    className={`border-b border-ink-50 ${focus?.key === mapPointKey(p) ? "bg-brand-50" : ""}`}
+                  >
                     <td className="py-2.5 pl-5 pr-4 font-mono text-xs text-ink-700">{p.deviceId}</td>
                     <td className="py-2.5 pr-4 text-ink-700">{p.applicationName}</td>
                     <td className="py-2.5 pr-4">
@@ -190,8 +238,18 @@ export default function DeviceMapPage() {
                       {roundCoord(p.latitude)}, {roundCoord(p.longitude)}
                       {p.isMock && <span className="ml-1.5 font-sans text-[11px] font-medium text-amber-700">mock</span>}
                     </td>
-                    <td className="py-2.5 pr-5 text-ink-500" title={new Date(p.lastSeenAt).toLocaleString()}>
+                    <td className="py-2.5 pr-4 text-ink-500" title={new Date(p.lastSeenAt).toLocaleString()}>
                       {timeAgo(p.lastSeenAt, now)}
+                    </td>
+                    <td className="py-2.5 pr-5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => showOnMap(mapPointKey(p))}
+                        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-ink-200 px-2 py-1 text-xs font-medium text-ink-700 hover:bg-ink-50"
+                      >
+                        <MapPinIcon size={13} />
+                        Show on map
+                      </button>
                     </td>
                   </tr>
                 ))}

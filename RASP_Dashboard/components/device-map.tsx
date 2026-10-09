@@ -8,6 +8,7 @@ import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import { catalogFor } from "@/lib/alertCatalog";
 import {
+  mapPointKey,
   markerColor,
   roundCoord,
   SEVERITY_COLOR,
@@ -109,6 +110,14 @@ function clusterPoints(map: L.Map, points: DeviceMapPoint[]): DeviceMapPoint[][]
 }
 
 const DEFAULT_CENTER: [number, number] = [20, 0];
+/** Zoom used when one device is picked from the list (street level). */
+const FOCUS_ZOOM = 16;
+
+/** A device picked from the list; a new `nonce` re-focuses the same device. */
+export interface DeviceMapFocus {
+  key: string;
+  nonce: number;
+}
 
 /**
  * Devices that shared their location, on OpenStreetMap tiles. Driven
@@ -118,13 +127,26 @@ const DEFAULT_CENTER: [number, number] = [20, 0];
  * (click a cluster to zoom in). Points that carry a `trail` get a line through
  * their last shared positions. Coordinates are shown rounded to 3 decimals.
  * `dark` dims and inverts the tiles so the map stays readable in dark mode.
+ * A new `fitKey` (e.g. the search text) fits the view to `points` again;
+ * `focus` zooms to one device and opens its popup.
  */
-export function DeviceMap({ points, dark }: { points: DeviceMapPoint[]; dark: boolean }) {
+export function DeviceMap({
+  points,
+  dark,
+  fitKey = "",
+  focus = null,
+}: {
+  points: DeviceMapPoint[];
+  dark: boolean;
+  fitKey?: string;
+  focus?: DeviceMapFocus | null;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
   const pointsRef = useRef<DeviceMapPoint[]>(points);
   const fittedRef = useRef(false);
+  const fitKeyRef = useRef(fitKey);
 
   function render() {
     const map = mapRef.current;
@@ -200,6 +222,10 @@ export function DeviceMap({ points, dark }: { points: DeviceMapPoint[]; dark: bo
     pointsRef.current = points;
     const map = mapRef.current;
     if (!map) return;
+    if (fitKeyRef.current !== fitKey) {
+      fitKeyRef.current = fitKey;
+      fittedRef.current = false;
+    }
     if (!fittedRef.current && points.length > 0) {
       fittedRef.current = true;
       if (points.length === 1) map.setView([points[0].latitude, points[0].longitude], 10);
@@ -207,7 +233,17 @@ export function DeviceMap({ points, dark }: { points: DeviceMapPoint[]; dark: bo
     }
     render();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points]);
+  }, [points, fitKey]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focus) return;
+    const p = pointsRef.current.find((q) => mapPointKey(q) === focus.key);
+    if (!p) return;
+    fittedRef.current = true;
+    map.setView([p.latitude, p.longitude], Math.max(map.getZoom(), FOCUS_ZOOM));
+    L.popup().setLatLng([p.latitude, p.longitude]).setContent(popupHtml(p)).openOn(map);
+  }, [focus]);
 
   return (
     <div

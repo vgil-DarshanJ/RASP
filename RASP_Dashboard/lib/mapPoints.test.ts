@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 type MapPointsModule = typeof import("./mapPoints");
-const { emptyMapMessage, markerColor, SEVERITY_COLOR, STALE_COLOR, timeAgo }: MapPointsModule = await import(
+const { emptyMapMessage, filterMapPoints, mapPointKey, markerColor, SEVERITY_COLOR, STALE_COLOR, timeAgo }: MapPointsModule = await import(
   new URL("./mapPoints.ts", import.meta.url).href
 );
 
@@ -38,4 +38,17 @@ test("empty state says whether devices exist without a shared location", () => {
   );
   assert.match(emptyMapMessage({ devicesReporting: 1, devicesWithLocation: 0 }, period, false), /^1 device reported/);
   assert.match(emptyMapMessage({ devicesReporting: 3, devicesWithLocation: 1 }, period, true), /^1 device shared a location .* none matches this severity\.$/);
+});
+
+test("search: device ID or application name, any case; blank shows all", () => {
+  const points = [
+    { deviceId: "a1b2c3d4", applicationName: "Bank App" },
+    { deviceId: "ffee0099", applicationName: "Wallet" },
+  ];
+  assert.deepEqual(filterMapPoints(points, ""), points);
+  assert.deepEqual(filterMapPoints(points, "   "), points);
+  assert.deepEqual(filterMapPoints(points, "B2C3"), [points[0]]);
+  assert.deepEqual(filterMapPoints(points, " wallet "), [points[1]]);
+  assert.deepEqual(filterMapPoints(points, "nothing"), []);
+  assert.equal(mapPointKey({ applicationId: "app1", deviceId: "dev1" }), "app1:dev1");
 });

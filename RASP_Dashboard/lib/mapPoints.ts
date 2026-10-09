@@ -73,6 +73,18 @@ export function markerColor(point: Pick<DeviceMapPoint, "severity" | "stale">): 
   return point.stale ? STALE_COLOR : SEVERITY_COLOR[point.severity];
 }
 
+/** One device on the map: the same device ID can appear under two applications. */
+export function mapPointKey(point: Pick<DeviceMapPoint, "applicationId" | "deviceId">): string {
+  return `${point.applicationId}:${point.deviceId}`;
+}
+
+/** Points whose device ID or application name contains [query], ignoring case; all points for a blank query. */
+export function filterMapPoints<T extends Pick<DeviceMapPoint, "deviceId" | "applicationName">>(points: T[], query: string): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return points;
+  return points.filter((p) => p.deviceId.toLowerCase().includes(q) || p.applicationName.toLowerCase().includes(q));
+}
+
 /** Coordinates as shown in the UI: always rounded to 3 decimals (~100 m). */
 export function roundCoord(value: number): string {
   return value.toFixed(3);
