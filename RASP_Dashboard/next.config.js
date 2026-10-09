@@ -6,6 +6,10 @@ const nextConfig = {
   // RSC fetches) by default, so that IP must be explicitly allow-listed
   // or the UI loads but hot-reload/data requests silently fail.
   allowedDevOrigins: ["192.168.2.208"],
+  // Production (deploy/, BE repository): NEXT_OUTPUT=export builds plain
+  // static files that the HTTPS proxy serves — every page is a client page,
+  // so no Node server is needed in front of users.
+  ...(process.env.NEXT_OUTPUT === "export" ? { output: "export" } : {}),
 };
 
 module.exports = nextConfig;
