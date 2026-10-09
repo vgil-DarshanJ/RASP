@@ -59,6 +59,14 @@ describe("new_device_for_account", () => {
     assert.deepEqual(rulesFired(facts(), history()), []);
     assert.deepEqual(rulesFired(facts({ deviceKeyId: "dev-old" }), history({ bindings: [bound("dev-old", 5)] })), []);
   });
+  test("reinstall: a new key with the same stable device id is the same phone, not a new device (F-15)", () => {
+    const reinstalled = facts({ deviceKeyId: "key-after-reinstall", deviceIdentity: "phone-hash" });
+    const before = history({ bindings: [{ ...bound("key-before-reinstall", 60), deviceIdentity: "phone-hash" }] });
+    assert.deepEqual(rulesFired(reinstalled, before), []);
+    const otherPhone = history({ bindings: [{ ...bound("key-other", 60), deviceIdentity: "other-phone-hash" }] });
+    assert.ok(rulesFired(reinstalled, otherPhone).includes("new_device_for_account"));
+    assert.ok(rulesFired(facts({ deviceKeyId: "k2" }), history({ bindings: [bound("k1", 60)] })).includes("new_device_for_account"), "without device ids: keys decide, as before");
+  });
   test("abuse: a hash shared across apps does not leak bindings — only this history counts", () => {
     // The repository scopes bindings by application; the rule sees only what it is given.
     assert.ok(rulesFired(facts(), history({ bindings: [bound("other", 1)] })).includes("new_device_for_account"));

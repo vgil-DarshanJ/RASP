@@ -11,6 +11,7 @@ const selectKey = {
   attestationVerdict: true,
   possessionVerified: true,
   attestationDetails: true,
+  deviceId: true,
 } as const;
 
 /** Postgres-backed [RegistrationRepository]; `deviceKeyId` is unique. */
@@ -59,10 +60,11 @@ export const prismaRegistrationRepository: RegistrationRepository = {
     return app ? { policy: app.attestationPolicy, expectedSigningCertSha256: app.expectedSigningCertSha256 } : null;
   },
 
-  async updateAttestation(id, attestation, possessionVerified, now) {
+  async updateAttestation(id, attestation, possessionVerified, now, deviceId) {
     await prisma.deviceRegistration.update({
       where: { id },
       data: {
+        ...(deviceId ? { deviceId } : {}),
         attestationStatus: attestation.status,
         attestationVerdict: attestation.verdict,
         attestationDetails: attestation as unknown as Prisma.InputJsonValue,

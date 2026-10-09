@@ -90,7 +90,23 @@ async function loadHistory(tx: Tx, input: StoreRiskEventInput): Promise<AccountH
     })) !== null;
   }
 
-  return { bindings, recentSessions, lastLocated, lastIpCountry, recentTransactionCount, beneficiarySeenBefore };
+  // Stable device ids of the keys involved (F-15): a reinstall is the same phone.
+  const keyIds = [...new Set([...bindings.map((b) => b.deviceKeyId), ...recentSessions.map((s) => s.deviceKeyId)])];
+  const identities = new Map<string, string>();
+  if (keyIds.length > 0) {
+    const rows = await tx.deviceRegistration.findMany({ where: { deviceKeyId: { in: keyIds } }, select: { deviceKeyId: true, deviceId: true } });
+    for (const r of rows) identities.set(r.deviceKeyId, r.deviceId ?? r.deviceKeyId);
+  }
+  const withIdentity = <T extends { deviceKeyId: string }>(x: T) => ({ ...x, deviceIdentity: identities.get(x.deviceKeyId) ?? x.deviceKeyId });
+
+  return {
+    bindings: bindings.map(withIdentity),
+    recentSessions: recentSessions.map(withIdentity),
+    lastLocated,
+    lastIpCountry,
+    recentTransactionCount,
+    beneficiarySeenBefore,
+  };
 }
 
 /**

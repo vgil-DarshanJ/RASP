@@ -173,6 +173,7 @@ export async function processRiskEvent(args: {
   const facts: RiskEventFacts = {
     type: envelope.type,
     deviceKeyId: envelope.deviceKeyId,
+    deviceIdentity: device.deviceId ?? envelope.deviceKeyId,
     accountHash: envelope.accountHash,
     sessionHash: envelope.sessionHash,
     sessionEvent: envelope.type === "session" ? envelope.sessionEvent : undefined,

@@ -109,10 +109,16 @@ export function extractLocation(evidence: unknown): LocationExtraction {
 }
 
 /** Prisma `SecurityEvent` column values for an (opted-in) location, or all-empty for null. */
+/** 3 decimals (about 110 m): the most precise coordinate stored on a security event (F-16). */
+export function coarseCoordinate(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 export function locationColumns(loc: StoredLocation | null) {
   return {
-    latitude: loc?.latitude ?? null,
-    longitude: loc?.longitude ?? null,
+    // Older SDKs send full precision; the columns never keep more than ~110 m.
+    latitude: loc ? coarseCoordinate(loc.latitude) : null,
+    longitude: loc ? coarseCoordinate(loc.longitude) : null,
     locationAccuracyM: loc?.accuracyM ?? null,
     locationCapturedAt: loc?.capturedAt ?? null,
     locationOptIn: loc !== null,

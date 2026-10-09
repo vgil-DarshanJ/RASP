@@ -43,6 +43,7 @@ export interface RegisteredKey {
   attestationVerdict: string;
   possessionVerified?: boolean;
   attestationDetails?: unknown;
+  deviceId?: string | null;
 }
 
 export interface NewRegistration {
@@ -77,8 +78,12 @@ export interface RegistrationRepository {
   touch(id: string, now: Date): Promise<void>;
   /** The application's attestation policy; RECORD when not implemented. */
   policyFor?(applicationId: string): Promise<ApplicationPolicy | null>;
-  /** Replaces the stored attestation of a key after a new, possession-proven registration. */
-  updateAttestation?(id: string, attestation: AttestationInspection, possessionVerified: boolean, now: Date): Promise<void>;
+  /**
+   * Replaces the stored attestation of a key after a new, possession-proven
+   * registration, and sets `deviceId` when the row has none yet (keys
+   * registered by SDKs that did not send one, F-15).
+   */
+  updateAttestation?(id: string, attestation: AttestationInspection, possessionVerified: boolean, now: Date, deviceId?: string): Promise<void>;
 }
 
 export interface RegistrationOutcome {
@@ -163,7 +168,7 @@ export async function registerDevice(args: {
 
   const existing = await args.repo.findByKeyId(deviceKeyId);
   if (existing) {
-    return existingKey({ existing, applicationId: args.applicationId, appId, now: args.now, repo: args.repo, policy, attestation, possessionVerified, revocationRequired, shortfalls });
+    return existingKey({ existing, applicationId: args.applicationId, appId, deviceId, now: args.now, repo: args.repo, policy, attestation, possessionVerified, revocationRequired, shortfalls });
   }
 
   if (policy.policy === "REQUIRE_HARDWARE") {
@@ -190,7 +195,7 @@ export async function registerDevice(args: {
   if (created === "exists") {
     const winner = await args.repo.findByKeyId(deviceKeyId);
     if (!winner) return { status: 500, body: { error: "REGISTRATION_FAILED" } };
-    return existingKey({ existing: winner, applicationId: args.applicationId, appId, now: args.now, repo: args.repo, policy, attestation, possessionVerified, revocationRequired, shortfalls });
+    return existingKey({ existing: winner, applicationId: args.applicationId, appId, deviceId, now: args.now, repo: args.repo, policy, attestation, possessionVerified, revocationRequired, shortfalls });
   }
   return {
     status: 201,
@@ -202,6 +207,7 @@ async function existingKey(a: {
   existing: RegisteredKey;
   applicationId: string;
   appId: string;
+  deviceId?: string;
   now: Date;
   repo: RegistrationRepository;
   policy: ApplicationPolicy;
@@ -223,7 +229,7 @@ async function existingKey(a: {
   let possession = existing.possessionVerified ?? false;
   let reasons: PolicyReason[];
   if (a.possessionVerified && a.repo.updateAttestation) {
-    await a.repo.updateAttestation(existing.id, a.attestation, true, a.now);
+    await a.repo.updateAttestation(existing.id, a.attestation, true, a.now, existing.deviceId ? undefined : a.deviceId);
     verdict = a.attestation.verdict;
     possession = true;
     reasons = a.shortfalls(a.attestation, true);

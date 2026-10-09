@@ -22,14 +22,14 @@ const loc = (lat: unknown, lon: unknown, optIn?: boolean) => [
 const keys = (evidence: unknown) => (evidence as { key: string }[]).map((e) => e.key);
 
 describe("extractLocation", () => {
-  test("opt-in with valid coordinates: stored in the columns, evidence unchanged", () => {
+  test("opt-in with valid coordinates: stored in the columns rounded to 3 decimals (F-16), evidence unchanged", () => {
     const ev = loc(19.076, 72.8777, true);
     const x = extractLocation(ev);
     assert.equal(x.optIn, true);
     assert.equal(x.stripped, false);
     assert.deepEqual(x.evidence, ev);
     assert.deepEqual(locationColumns(x.location), {
-      latitude: 19.076, longitude: 72.8777, locationAccuracyM: 12.5,
+      latitude: 19.076, longitude: 72.878, locationAccuracyM: 12.5,
       locationCapturedAt: new Date(NOW - 1000), locationOptIn: true,
     });
   });

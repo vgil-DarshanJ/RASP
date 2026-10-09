@@ -136,10 +136,23 @@ export interface RiskLocation {
   capturedAt: Date;
 }
 
+/**
+ * Which phone a key belongs to, for the device rules (F-15): the stable
+ * device id the SDK sent at registration (hashed ANDROID_ID, survives a
+ * reinstall), else the key id. A reinstall gets a new key but keeps the
+ * device id, so it is not a "new device" for its accounts. The id comes from
+ * the device and proves nothing on its own; the key and its attestation do.
+ */
+export function deviceIdentityOf(x: { deviceKeyId: string; deviceIdentity?: string }): string {
+  return x.deviceIdentity ?? x.deviceKeyId;
+}
+
 /** The event being evaluated (already verified and not a replay). */
 export interface RiskEventFacts {
   type: "session" | "transaction";
   deviceKeyId: string;
+  /** See [deviceIdentityOf]. */
+  deviceIdentity?: string;
   accountHash: string;
   sessionHash: string;
   sessionEvent?: "login" | "resume" | "logout";
@@ -153,9 +166,9 @@ export interface RiskEventFacts {
 /** What the store already knows about this account, before this event. */
 export interface AccountHistory {
   /** Devices bound to the account (firstSeenAt = server time it was first seen). */
-  bindings: { deviceKeyId: string; firstSeenAt: Date }[];
+  bindings: { deviceKeyId: string; deviceIdentity?: string; firstSeenAt: Date }[];
   /** Session events of the account with eventTime in the concurrent-sessions window. */
-  recentSessions: { deviceKeyId: string; sessionHash: string; sessionEvent: string; eventTime: Date }[];
+  recentSessions: { deviceKeyId: string; deviceIdentity?: string; sessionHash: string; sessionEvent: string; eventTime: Date }[];
   /** Latest earlier event (session or transaction) of the account with a location. */
   lastLocated: { location: RiskLocation; deviceKeyId: string } | null;
   /** Latest earlier event of the account with a known request-IP country. */
@@ -222,8 +235,9 @@ const finding = (rule: RiskRuleId, explanation: string, evidence: Record<string,
 export function evaluateRiskRules(event: RiskEventFacts, history: AccountHistory, rules: RiskRulesConfig): RiskFinding[] {
   const findings: RiskFinding[] = [];
   const account = shortHash(event.accountHash);
-  const knownDevices = new Set(history.bindings.map((b) => b.deviceKeyId));
-  const isNewDevice = !knownDevices.has(event.deviceKeyId);
+  const thisDevice = deviceIdentityOf(event);
+  const knownDevices = new Set(history.bindings.map(deviceIdentityOf));
+  const isNewDevice = !knownDevices.has(thisDevice);
 
   if (isNewDevice && knownDevices.size > 0) {
     findings.push(finding(
@@ -236,8 +250,8 @@ export function evaluateRiskRules(event: RiskEventFacts, history: AccountHistory
   if (isNewDevice) {
     const { maxDevices, windowMinutes } = rules.deviceChangeVelocity;
     const since = event.receivedAt.getTime() - windowMinutes * MINUTE_MS;
-    const recent = new Set(history.bindings.filter((b) => b.firstSeenAt.getTime() >= since).map((b) => b.deviceKeyId));
-    recent.add(event.deviceKeyId);
+    const recent = new Set(history.bindings.filter((b) => b.firstSeenAt.getTime() >= since).map(deviceIdentityOf));
+    recent.add(thisDevice);
     if (recent.size > maxDevices) {
       findings.push(finding(
         "device_change_velocity",
@@ -254,11 +268,11 @@ export function evaluateRiskRules(event: RiskEventFacts, history: AccountHistory
     for (const s of history.recentSessions) {
       const time = s.eventTime.getTime();
       if (time < since || time > event.eventTime.getTime()) continue;
-      const key = `${s.deviceKeyId}|${s.sessionHash}`;
+      const key = `${deviceIdentityOf(s)}|${s.sessionHash}`;
       const prev = latestPerSession.get(key);
-      if (!prev || time >= prev.time) latestPerSession.set(key, { deviceKeyId: s.deviceKeyId, sessionEvent: s.sessionEvent, time });
+      if (!prev || time >= prev.time) latestPerSession.set(key, { deviceKeyId: deviceIdentityOf(s), sessionEvent: s.sessionEvent, time });
     }
-    const activeDevices = new Set<string>([event.deviceKeyId]);
+    const activeDevices = new Set<string>([thisDevice]);
     for (const s of latestPerSession.values()) {
       if (s.sessionEvent === "login" || s.sessionEvent === "resume") activeDevices.add(s.deviceKeyId);
     }

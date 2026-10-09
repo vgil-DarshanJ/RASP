@@ -143,8 +143,10 @@ describe("registration with possession proof and policy", () => {
       return this.policy;
     }
     updated: string[] = [];
-    async updateAttestation(id: string) {
+    deviceIds: Array<string | undefined> = [];
+    async updateAttestation(id: string, _a: unknown, _p: boolean, _n: Date, deviceId?: string) {
       this.updated.push(id);
+      this.deviceIds.push(deviceId);
     }
   }
 
@@ -225,9 +227,10 @@ describe("registration with possession proof and policy", () => {
     repo.policy = { policy: "REQUIRE_HARDWARE", expectedSigningCertSha256: null };
     const without = await registerDevice({ body: body(d), applicationId: "app-1", now: NOW, repo, revoked: new Map() });
     assert.deepEqual([without.status, without.body.reasons], [403, ["possession_not_proven"]]);
-    const withProof = await registerDevice({ body: body(d, await d.prove()), applicationId: "app-1", now: NOW, repo, revoked: new Map() });
+    const withProof = await registerDevice({ body: body(d, { ...(await d.prove()), deviceId: "e".repeat(64) }), applicationId: "app-1", now: NOW, repo, revoked: new Map() });
     assert.equal(withProof.status, 200, JSON.stringify(withProof.body));
     assert.equal(repo.updated.length, 1);
+    assert.deepEqual(repo.deviceIds, ["e".repeat(64)], "the stable device id is added to a row that had none (F-15)");
   });
 
   test("the real phone chain under REQUIRE_HARDWARE fails only on possession (no private key in the fixture)", async () => {
