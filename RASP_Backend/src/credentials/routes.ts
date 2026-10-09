@@ -8,6 +8,7 @@ import { encryptSecret } from "../crypto/secretBox";
 import { publicIngestionUrl } from "./ingestionUrl";
 import { ensureAccountHashSalt } from "../risk/accountHashSalt";
 import { maskEncryptedSecret, maskSecret } from "../security/secretFields";
+import { requireAdminRole } from "../auth/roles";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
@@ -140,7 +141,7 @@ async function assertOwnedApplication(applicationId: string, organizationId: str
  *  The ONLY endpoint that returns `api_secret` and `account_hash_salt` in
  *  full (issuing a new credential is also how a credential is rotated).
  *  Everything else shows masked prefixes — see security/secretFields.ts. */
-credentialsRouter.post("/applications/:applicationId/credentials", async (req: AuthedRequest, res) => {
+credentialsRouter.post("/applications/:applicationId/credentials", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 
@@ -187,6 +188,7 @@ credentialsRouter.post("/applications/:applicationId/credentials", async (req: A
 
 credentialsRouter.post(
   "/applications/:applicationId/credentials/:credentialId/revoke",
+  requireAdminRole,
   async (req: AuthedRequest, res) => {
     const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
     if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
@@ -225,6 +227,7 @@ credentialsRouter.post(
  *  app already has — nothing to re-issue or re-download. */
 credentialsRouter.post(
   "/applications/:applicationId/credentials/:credentialId/unrevoke",
+  requireAdminRole,
   async (req: AuthedRequest, res) => {
     const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
     if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
@@ -266,6 +269,7 @@ credentialsRouter.post(
  *  still be signing requests with it. */
 credentialsRouter.delete(
   "/applications/:applicationId/credentials/:credentialId",
+  requireAdminRole,
   async (req: AuthedRequest, res) => {
     const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
     if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });

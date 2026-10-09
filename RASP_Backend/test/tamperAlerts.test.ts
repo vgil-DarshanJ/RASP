@@ -126,6 +126,8 @@ describe("raiseTamperAlerts", () => {
 
     const originalKey = process.env.CREDENTIAL_ENCRYPTION_KEY;
     process.env.CREDENTIAL_ENCRYPTION_KEY = crypto.randomBytes(32).toString("hex"); // throwaway test key
+    const originalAllow = process.env.WEBHOOK_ALLOW_PRIVATE_DESTINATIONS;
+    process.env.WEBHOOK_ALLOW_PRIVATE_DESTINATIONS = "1"; // receiver on 127.0.0.1 over http
     const webhookConfig = prisma.webhookConfig as unknown as Record<string, unknown>;
     const originalFind = webhookConfig.findUnique;
     const originalUpdate = webhookConfig.update;
@@ -147,6 +149,8 @@ describe("raiseTamperAlerts", () => {
       webhookConfig.update = originalUpdate;
       if (originalKey === undefined) delete process.env.CREDENTIAL_ENCRYPTION_KEY;
       else process.env.CREDENTIAL_ENCRYPTION_KEY = originalKey;
+      if (originalAllow === undefined) delete process.env.WEBHOOK_ALLOW_PRIVATE_DESTINATIONS;
+      else process.env.WEBHOOK_ALLOW_PRIVATE_DESTINATIONS = originalAllow;
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
     }

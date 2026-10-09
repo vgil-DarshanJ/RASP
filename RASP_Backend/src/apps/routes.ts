@@ -8,6 +8,7 @@ import { countrySet, toCountryCode } from "../ipRisk/ipRisk";
 import { userRateLimiter } from "../redis/userRateLimit";
 import { generateAccountHashSalt } from "../risk/accountHashSalt";
 import { PUBLIC_APPLICATION_SELECT, isSecretFieldName, maskEncryptedSecret, maskSecret } from "../security/secretFields";
+import { isAdminRole, requireAdminRole } from "../auth/roles";
 import {
   DEFAULT_RISK_RULES,
   RISK_RULE_LIMITS,
@@ -108,11 +109,9 @@ appsRouter.get("/:id", async (req: AuthedRequest, res) => {
   });
 });
 
-/** Roles allowed to change an application's security settings. */
-const SECURITY_ADMIN_ROLES = new Set(["OWNER", "ADMIN"]);
-
+/** Roles allowed to change an application's security settings (see auth/roles.ts). */
 export function canEditAppSecurity(role: string | undefined): boolean {
-  return role !== undefined && SECURITY_ADMIN_ROLES.has(role);
+  return isAdminRole(role);
 }
 
 const securityPatchSchema = z
@@ -353,7 +352,7 @@ appsRouter.patch("/:id", settingsRateLimit, async (req: AuthedRequest, res) => {
  * row actually being touched. The SDK's own credential also stops being
  * able to ship new events immediately (see `middleware/apiKey.ts`).
  */
-appsRouter.delete("/:id", async (req: AuthedRequest, res) => {
+appsRouter.delete("/:id", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await prisma.application.findFirst({
     where: { id: req.params.id, organizationId: req.user!.organizationId, archivedAt: null },
   });

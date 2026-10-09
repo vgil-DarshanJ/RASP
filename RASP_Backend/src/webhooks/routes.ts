@@ -5,6 +5,8 @@ import { prisma } from "../db/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { encryptSecret } from "../crypto/secretBox";
 import { deliver } from "./dispatch";
+import { checkDestination } from "./destination";
+import { requireAdminRole } from "../auth/roles";
 
 export const webhooksRouter = Router();
 webhooksRouter.use(requireAuth);
@@ -60,14 +62,19 @@ const upsertSchema = z.object({
  * enabled on an existing config keeps its current secret untouched, so
  * rotating the secret is a deliberate separate action (`/rotate-secret`
  * below), not a side effect of an unrelated edit.
+ *
+ * The URL must be a public https:// endpoint (400 WEBHOOK_URL_*; see
+ * destination.ts). OWNER / ADMIN only, like every webhook change below.
  */
-webhooksRouter.put("/applications/:applicationId", async (req: AuthedRequest, res) => {
+webhooksRouter.put("/applications/:applicationId", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 
   const parsed = upsertSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_BODY", details: parsed.error.flatten() });
   const { url, minSeverity, enabled } = parsed.data;
+  const destinationError = await checkDestination(url);
+  if (destinationError) return res.status(400).json({ error: destinationError });
 
   const existing = await prisma.webhookConfig.findUnique({ where: { applicationId: app.id } });
 
@@ -86,7 +93,7 @@ webhooksRouter.put("/applications/:applicationId", async (req: AuthedRequest, re
   res.status(201).json({ webhook: serialize(created), secret });
 });
 
-webhooksRouter.post("/applications/:applicationId/rotate-secret", async (req: AuthedRequest, res) => {
+webhooksRouter.post("/applications/:applicationId/rotate-secret", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 
@@ -101,7 +108,7 @@ webhooksRouter.post("/applications/:applicationId/rotate-secret", async (req: Au
   res.json({ webhook: serialize(updated), secret });
 });
 
-webhooksRouter.delete("/applications/:applicationId", async (req: AuthedRequest, res) => {
+webhooksRouter.delete("/applications/:applicationId", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 
@@ -114,7 +121,7 @@ webhooksRouter.delete("/applications/:applicationId", async (req: AuthedRequest,
  *  gate (a "test" click should always fire, even while a customer has
  *  the config paused mid-setup) so the FE can offer a "Send test alert"
  *  button that proves the URL/secret actually work end-to-end. */
-webhooksRouter.post("/applications/:applicationId/test", async (req: AuthedRequest, res) => {
+webhooksRouter.post("/applications/:applicationId/test", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
 

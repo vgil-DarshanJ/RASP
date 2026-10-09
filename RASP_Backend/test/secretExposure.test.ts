@@ -53,6 +53,8 @@ const ENV = {
   JWT_SECRET: random(32),
   CREDENTIAL_ENCRYPTION_KEY: random(32),
   PUBLIC_INGESTION_URL: "https://ingest.example.test/v1/events",
+  // The webhook receiver runs on 127.0.0.1 over http (development override, see webhooks/destination.ts).
+  WEBHOOK_ALLOW_PRIVATE_DESTINATIONS: "1",
 };
 const OWNER_PASSWORD = random(18, "base64url");
 const MEMBER_PASSWORD = random(18, "base64url");
