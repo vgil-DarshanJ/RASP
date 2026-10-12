@@ -472,7 +472,7 @@ export function StatCard({
 /** Copies text to the clipboard and flashes a "Copied" confirmation.
  *  `navigator.clipboard` only exists in a secure context (https:, or
  *  http://localhost) — this app is also reached over plain
- *  `http://<lan-ip>:3000`, where that API is simply undefined, not just
+ *  `http://<lan-ip>:5555`, where that API is simply undefined, not just
  *  permission-denied. Falls back to the older `document.execCommand`
  *  path (a hidden, focused, selected textarea) which still works over
  *  plain HTTP, instead of throwing an unhandled rejection. */

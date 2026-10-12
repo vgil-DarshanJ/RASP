@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://192.168.2.208:4444";
 
 export type SystemHealth = {
   status: "checking" | "healthy" | "degraded" | "unreachable";
