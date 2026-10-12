@@ -15,8 +15,8 @@ describe("public ingestion URL", () => {
     );
   });
 
-  test("unset or blank falls back to localhost", () => {
-    assert.equal(DEFAULT_INGESTION_URL, "http://localhost:4000/v1/events");
+  test("unset or blank falls back to the office-LAN backend URL", () => {
+    assert.equal(DEFAULT_INGESTION_URL, "http://192.168.2.208:4444/v1/events");
     assert.equal(publicIngestionUrl({}), DEFAULT_INGESTION_URL);
     assert.equal(publicIngestionUrl({ PUBLIC_INGESTION_URL: "  " }), DEFAULT_INGESTION_URL);
   });

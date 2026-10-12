@@ -19,7 +19,7 @@
 
 	@api path /v1/* /healthz
 	handle @api {
-		reverse_proxy backend:4000
+		reverse_proxy backend:4444
 	}
 
 	handle {

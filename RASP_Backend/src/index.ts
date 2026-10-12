@@ -11,10 +11,11 @@ if (problems.length > 0) {
 }
 
 const app = createApp();
-const port = Number(process.env.PORT) || 4000;
+const host = process.env.HOST || "0.0.0.0";
+const port = Number(process.env.PORT) || 4444;
 
-const server = app.listen(port, () => {
-  console.log(`[rasp-shield-backend] listening on http://localhost:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`[rasp-shield-backend] listening on ${host}:${port}`);
 });
 
 // Daily deletion of data past its retention period, when one is configured.

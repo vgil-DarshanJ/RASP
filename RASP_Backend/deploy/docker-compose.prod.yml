@@ -52,7 +52,7 @@ services:
       DATABASE_URL: postgresql://rasp:${POSTGRES_PASSWORD}@postgres:5432/rasp_shield?schema=public
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
-      PORT: "4000"
+      PORT: "4444"
       TRUST_PROXY: "1"
       PUBLIC_INGESTION_URL: https://${DOMAIN:?set DOMAIN in production.env}/v1/events
       CORS_ORIGINS: https://${DOMAIN}

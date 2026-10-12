@@ -39,8 +39,8 @@ function extractPort(urlLike, fallback) {
 }
 
 const PORTS = [
-  { port: Number(process.env.PORT) || 4000, label: "Backend API (Express)" },
-  { port: Number(process.env.FRONTEND_PORT) || 3000, label: "Frontend (Next.js)" },
+  { port: Number(process.env.PORT) || 4444, label: "Backend API (Express)" },
+  { port: Number(process.env.FRONTEND_PORT) || 5555, label: "Frontend (Next.js)" },
   { port: extractPort(process.env.DATABASE_URL, 5432), label: "Postgres" },
   { port: extractPort(process.env.REDIS_URL, 6379), label: "Redis" },
 ];
@@ -124,8 +124,8 @@ async function main() {
     console.log(
       "⚠ One or more ports are already taken on this machine. Either stop " +
         "whatever else is using them, or change this project's port for the " +
-        "conflicting service (PORT for the backend, FRONTEND_PORT/`next dev " +
-        "-p <port>` for the frontend, or the port in DATABASE_URL/REDIS_URL) " +
+        "conflicting service (PORT for the backend, FRONTEND_PORT for the frontend, " +
+        "or the port in DATABASE_URL/REDIS_URL) " +
         "before deploying here.",
     );
   }

@@ -32,6 +32,44 @@ One server, one HTTPS host name, Docker. `docker-compose.prod.yml` runs:
 7. Issue a credential: it carries `https://<DOMAIN>/v1/events`, which the
    release build of the app accepts (HTTPS only).
 
+## Office-LAN development (HTTP)
+
+For a trusted private LAN only, the server templates use backend
+`http://192.168.2.208:4444` and dashboard `http://192.168.2.208:5555`.
+The backend binds to `0.0.0.0`, permits the dashboard origin, and issues SDK
+credentials pointing at `/v1/events` on port 4444. HTTP is for debug builds;
+release builds require HTTPS. Do not expose these ports to the public internet.
+
+On the Linux server, configure the backend before issuing app credentials:
+
+```sh
+cd ~/Darshan/RASP_Backend
+cp .env.server.example .env
+# Edit .env: generate JWT_SECRET (`openssl rand -base64 48`) and
+# CREDENTIAL_ENCRYPTION_KEY (`openssl rand -hex 32`); confirm LAN IP and DB values.
+npm ci
+docker compose up -d postgres redis
+npm run prisma:generate
+npx prisma migrate deploy
+npm run dev
+```
+
+In another terminal, run the dashboard:
+
+```sh
+cd ~/Darshan/RASP_Dashboard
+cp .env.local.example .env.local
+npm ci
+npm run dev
+```
+
+Allow inbound TCP 4444 and 5555 only from the office LAN in the host firewall.
+Verify `http://192.168.2.208:4444/healthz` returns `ok: true`, then open
+`http://192.168.2.208:5555`. For app device locations, the host app must obtain
+a fresh fix and set the SDK location snapshot with explicit user opt-in;
+heartbeats are tied to that app's registered device and stored only while
+sharing is enabled.
+
 ## Operations
 
 - Update: `git pull` in both repositories, then the same `up -d --build`.

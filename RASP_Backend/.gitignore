@@ -6,6 +6,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.server.example
 
 # Production deployment: filled-in settings, backups and the operator's list stay on the server.
 deploy/production.env
