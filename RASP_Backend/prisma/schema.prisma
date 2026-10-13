@@ -137,6 +137,8 @@ model Application {
   settingsAuditLogs ApplicationSettingsAuditLog[]
   deviceLocations   DeviceLocation[]
   deviceLocationPoints DeviceLocationPoint[]
+  remoteConfigs        RemoteConfig[]
+  remoteConfigAudits   RemoteConfigAudit[]
 
   @@index([organizationId])
   @@map("applications")
@@ -516,4 +518,51 @@ model DeviceLocationPoint {
 
   @@index([applicationId, deviceId, receivedAt])
   @@map("device_location_points")
+}
+
+/// One published version of an application's signed remote configuration
+/// (Task 10.0, src/remoteConfig/). `payload` holds only the validated
+/// allowed settings (src/remoteConfig/settings.ts); the signature is computed
+/// when a device asks (GET /v1/config) with CONFIG_SIGNING_KEY, so it is never
+/// stored. Versions only grow: a rollback publishes a copy of an older version
+/// as a new, higher version. At most one row per application is `active`.
+model RemoteConfig {
+  id                String      @id @default(cuid())
+  application       Application @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  version           Int
+  payload           Json
+  createdByUserId   String
+  createdAt         DateTime    @default(now())
+  expiresAt         DateTime
+  active            Boolean     @default(true)
+  /// Set when this version was published by a rollback: the version it copies.
+  copiedFromVersion Int?
+  audits            RemoteConfigAudit[]
+
+  @@unique([applicationId, version])
+  @@index([applicationId, active])
+  @@map("remote_configs")
+}
+
+/// Who published or rolled back which remote-config version, when, from where,
+/// and which settings changed. Append-only.
+model RemoteConfigAudit {
+  id                String        @id @default(cuid())
+  application       Application   @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  remoteConfig      RemoteConfig? @relation(fields: [remoteConfigId], references: [id])
+  remoteConfigId    String?
+  /// PUBLISHED | ROLLED_BACK
+  action            String
+  version           Int
+  fromVersion       Int?
+  /// [{ field, oldValue, newValue }] against the previously active version.
+  changes           Json?
+  performedByUserId String
+  performedAt       DateTime      @default(now())
+  ipAddress         String?
+
+  @@index([applicationId, performedAt])
+  @@map("remote_config_audits")
 }
