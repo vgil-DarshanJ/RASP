@@ -91,6 +91,10 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   remote_control_app: "high",
   screen_sharing_risk: "high",
 
+  // Task 10.0 — the SDK refused a remote configuration (bad signature,
+  // rollback, expired or invalid): a forged or replayed config, or a MITM.
+  remote_config_rejected: "high",
+
   // Task 8.1 — fraud-risk rules raised by the backend (risk/rules.ts)
   new_device_for_account: "medium",
   device_change_velocity: "high",
