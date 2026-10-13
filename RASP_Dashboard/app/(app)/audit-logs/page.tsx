@@ -6,7 +6,7 @@ import { Badge, Card, ScrollTextIcon } from "@/components/ui";
 
 interface AuditLogRow {
   id: string;
-  action: "ISSUED" | "REVOKED";
+  action: "ISSUED" | "REVOKED" | "REACTIVATED" | "DELETED" | "REVEALED";
   performedAt: string;
   performedByEmail: string;
   ipAddress: string | null;
@@ -60,7 +60,7 @@ export default function AuditLogsPage() {
                   <tr key={log.id} className="border-b border-ink-50">
                     <td className="py-2.5 pl-5 pr-4 text-ink-500">{new Date(log.performedAt).toLocaleString()}</td>
                     <td className="py-2.5 pr-4">
-                      <Badge tone={log.action === "ISSUED" ? "green" : "amber"} icon={false}>
+                      <Badge tone={log.action === "ISSUED" || log.action === "REACTIVATED" ? "green" : log.action === "REVEALED" ? "slate" : "amber"} icon={false}>
                         {log.action}
                       </Badge>
                     </td>

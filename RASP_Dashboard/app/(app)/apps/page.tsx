@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { apiDownload, apiFetch } from "@/lib/api-client";
+import { ApiError, apiDownload, apiFetch } from "@/lib/api-client";
 import { useAppSelection } from "@/lib/app-selection";
 import {
   Badge,
@@ -63,6 +63,8 @@ export default function AppsPage() {
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [creating, setCreating] = useState(false);
   const [issued, setIssued] = useState<IssuedCredential | null>(null);
+  /** "new": just issued; "shown": an existing credential shown again. */
+  const [issuedMode, setIssuedMode] = useState<"new" | "shown">("new");
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Application | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -104,6 +106,7 @@ export default function AppsPage() {
         { method: "POST" },
       );
       setIssued(credential);
+      setIssuedMode("new");
       setShowForm(false);
       setName("");
       setPlatform(null);
@@ -113,6 +116,20 @@ export default function AppsPage() {
     } finally {
       setCreating(false);
     }
+  }
+
+  /** From the app drawer: issue a new credential (the old ones keep working
+   *  until revoked on the Licenses page) or show an active one again. */
+  async function getCredential(app: Application, credentialId: string | null) {
+    const base = `/v1/credentials/applications/${app.id}/credentials`;
+    const credential = credentialId
+      ? await apiFetch<IssuedCredential>(`${base}/${credentialId}/reveal`, { method: "POST" })
+      : await apiFetch<IssuedCredential>(base, { method: "POST" });
+    setIssued(credential);
+    setIssuedMode(credentialId ? "shown" : "new");
+    setDetailApp(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    await refresh();
   }
 
   function downloadCredentialJson(cred: IssuedCredential) {
@@ -238,7 +255,9 @@ export default function AppsPage() {
           <div className="flex items-center justify-between bg-brand-50 px-6 py-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-brand-800">
               <CheckCircleIcon size={16} />
-              {issued.application_name} is ready — save this credential now
+              {issuedMode === "new"
+                ? `${issued.application_name} is ready — save this credential now`
+                : `${issued.application_name} — existing credential`}
             </h2>
             <button className="text-sm text-brand-700 hover:underline" onClick={() => setIssued(null)}>
               Dismiss
@@ -247,9 +266,12 @@ export default function AppsPage() {
           <div className="p-6">
             <p className="mb-4 flex items-start gap-2 text-sm text-ink-600">
               <KeyIcon size={15} className="mt-0.5 shrink-0 text-ink-400" />
-              The <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">api_secret</code> below is shown{" "}
-              <strong>once</strong> — this backend never stores it in plaintext, so if you lose it you&apos;ll need to
-              rotate the credential.
+              <span>
+                The <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">api_secret</code> below is
+                secret: share this JSON only with the people who set up the app. An administrator can show it again
+                from the application (each view is recorded in Audit Logs); revoke it on the Licenses page if it
+                leaks.
+              </span>
             </p>
             <div className="relative mb-4 max-h-64 overflow-auto rounded-xl bg-ink-950 p-4">
               <div className="absolute right-3 top-3">
@@ -310,7 +332,7 @@ export default function AppsPage() {
                 {app.credentials.length > 0 ? `${app.credentials.length} active credential(s)` : "No credential yet"}
               </Badge>
               <p className="mt-3 flex items-center gap-1 text-xs font-medium text-brand-700 opacity-0 transition group-hover:opacity-100">
-                <DownloadIcon size={12} /> Click to download SDK
+                <KeyIcon size={12} /> Click for credentials and SDK
               </p>
             </Card>
           ))}
@@ -365,6 +387,7 @@ export default function AppsPage() {
           catalog={catalog}
           onClose={() => setDetailApp(null)}
           onDownload={downloadSdk}
+          onGetCredential={(credentialId) => getCredential(detailApp, credentialId)}
         />
       )}
     </div>
@@ -385,13 +408,34 @@ function AppDetailDrawer({
   catalog,
   onClose,
   onDownload,
+  onGetCredential,
 }: {
   app: Application;
   catalog: SdkCatalogEntry[];
   onClose: () => void;
   onDownload: (platform: Platform) => void;
+  /** null: issue a new credential; an id: show that active credential again. */
+  onGetCredential: (credentialId: string | null) => Promise<void>;
 }) {
   const entry = catalog.find((c) => c.platform === app.platform);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+
+  async function getCredential(credentialId: string | null) {
+    setBusy(credentialId ?? "new");
+    setCredentialError(null);
+    try {
+      await onGetCredential(credentialId);
+    } catch (e) {
+      setCredentialError(
+        e instanceof ApiError && e.status === 403
+          ? "Only an owner or admin can issue or show credentials."
+          : "Could not get the credential. Please try again.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-[2px]" onClick={onClose}>
@@ -438,16 +482,55 @@ function AppDetailDrawer({
             </Button>
           </div>
 
-          {app.credentials.length === 0 && (
-            <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              This app has no active credential — you&apos;ll need one to actually connect the SDK you download here.
-              Check the{" "}
+          <div className="mt-5 rounded-xl border border-ink-100 p-4">
+            <h3 className="flex items-center gap-1.5 text-sm font-semibold text-ink-900">
+              <KeyIcon size={15} /> Credentials
+            </h3>
+            {app.credentials.length === 0 ? (
+              <p className="mt-1 text-xs text-amber-800">
+                This app has no active credential — you&apos;ll need one to connect the SDK. Issue a new one below.
+              </p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {app.credentials.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-3 rounded-lg bg-ink-50 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-xs text-ink-700">{c.apiKey}</div>
+                      <div className="text-[11px] text-ink-500">issued {new Date(c.createdAt).toLocaleString()}</div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={busy === c.id}
+                      disabled={busy !== null}
+                      onClick={() => getCredential(c.id)}
+                    >
+                      Show credential
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Button
+              className="mt-3"
+              variant="secondary"
+              loading={busy === "new"}
+              disabled={busy !== null}
+              onClick={() => getCredential(null)}
+            >
+              <PlusIcon size={15} /> Issue new credential
+            </Button>
+            <p className="mt-2 text-[11px] text-ink-500">
+              A new credential does not stop the old ones; revoke those on the{" "}
               <a href="/licenses" className="font-medium underline">
                 Licenses
               </a>{" "}
-              page for its history, or register a new application if this one&apos;s original credential was lost.
+              page. Showing or issuing a credential is recorded in Audit Logs.
             </p>
-          )}
+            {credentialError && (
+              <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{credentialError}</p>
+            )}
+          </div>
 
           <SetupInstructions platform={app.platform} catalog={catalog} />
         </div>
