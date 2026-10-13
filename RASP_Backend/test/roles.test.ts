@@ -10,6 +10,7 @@ import jwt from "jsonwebtoken";
 import { appsRouter } from "../src/apps/routes";
 import { credentialsRouter } from "../src/credentials/routes";
 import { webhooksRouter } from "../src/webhooks/routes";
+import { remoteConfigAdminRouter } from "../src/remoteConfig/routes";
 import { encryptSecret } from "../src/crypto/secretBox";
 import { isAdminRole } from "../src/auth/roles";
 import { FakeDatabase, installFakePrisma } from "./fakePrisma";
@@ -37,6 +38,7 @@ before(async () => {
   restorePrisma = installFakePrisma(db);
   const app = express();
   app.use(express.json());
+  app.use("/v1/apps/:id/remote-config", remoteConfigAdminRouter);
   app.use("/v1/apps", appsRouter);
   app.use("/v1/credentials", credentialsRouter);
   app.use("/v1/webhooks", webhooksRouter);
@@ -76,6 +78,9 @@ const DESTRUCTIVE: Array<[string, string, unknown?]> = [
   ["POST", "/v1/webhooks/applications/app-1/rotate-secret"],
   ["POST", "/v1/webhooks/applications/app-1/test"],
   ["DELETE", "/v1/webhooks/applications/app-1"],
+  ["GET", "/v1/apps/app-1/remote-config"],
+  ["PUT", "/v1/apps/app-1/remote-config", { settings: {} }],
+  ["POST", "/v1/apps/app-1/remote-config/rollback", { version: 1 }],
   ["DELETE", "/v1/apps/app-1"],
 ];
 
@@ -84,12 +89,12 @@ test("only OWNER and ADMIN count as administrators", () => {
 });
 
 test("MEMBER: 403 FORBIDDEN_ROLE on every destructive or secret-revealing action, and nothing changes", async () => {
-  const snapshot = JSON.stringify([db.rows("apiCredential"), db.rows("webhookConfig"), db.rows("application")]);
+  const snapshot = JSON.stringify([db.rows("apiCredential"), db.rows("webhookConfig"), db.rows("application"), db.rows("remoteConfig")]);
   for (const [method, path, body] of DESTRUCTIVE) {
     const r = await call("MEMBER", method, path, body);
     assert.deepEqual([r.status, r.body], [403, { error: "FORBIDDEN_ROLE" }], `${method} ${path}`);
   }
-  assert.equal(JSON.stringify([db.rows("apiCredential"), db.rows("webhookConfig"), db.rows("application")]), snapshot);
+  assert.equal(JSON.stringify([db.rows("apiCredential"), db.rows("webhookConfig"), db.rows("application"), db.rows("remoteConfig")]), snapshot);
 });
 
 test("MEMBER can still read", async () => {

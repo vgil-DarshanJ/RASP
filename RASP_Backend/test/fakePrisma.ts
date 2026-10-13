@@ -38,6 +38,8 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
     transactionEvents: many("transactionEvent", "applicationId"),
     deviceLocations: many("deviceLocation", "applicationId"),
     deviceLocationPoints: many("deviceLocationPoint", "applicationId"),
+    remoteConfigs: many("remoteConfig", "applicationId"),
+    remoteConfigAudits: many("remoteConfigAudit", "applicationId"),
   },
   apiCredential: { application: one("application", "applicationId"), auditLogs: many("credentialAuditLog", "credentialId") },
   credentialAuditLog: { credential: one("apiCredential", "credentialId") },
@@ -51,6 +53,8 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
   transactionEvent: { application: one("application", "applicationId") },
   deviceLocation: { application: one("application", "applicationId") },
   deviceLocationPoint: { application: one("application", "applicationId") },
+  remoteConfig: { application: one("application", "applicationId"), audits: many("remoteConfigAudit", "remoteConfigId") },
+  remoteConfigAudit: { application: one("application", "applicationId"), remoteConfig: one("remoteConfig", "remoteConfigId") },
 };
 
 export const MODELS = Object.keys(RELATIONS);
@@ -80,6 +84,8 @@ const DEFAULTS: Record<string, () => Row> = {
   transactionEvent: () => ({ receivedAt: new Date() }),
   deviceLocation: () => ({ latitude: null, longitude: null, accuracyM: null, isMock: null, capturedAt: null, lastCounter: 0n }),
   deviceLocationPoint: () => ({ accuracyM: null, receivedAt: new Date() }),
+  remoteConfig: () => ({ createdAt: new Date(), active: true, copiedFromVersion: null }),
+  remoteConfigAudit: () => ({ remoteConfigId: null, fromVersion: null, changes: null, performedAt: new Date(), ipAddress: null }),
 };
 
 export class FakeDatabase {

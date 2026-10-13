@@ -4,7 +4,8 @@
 // rotate one: POST /v1/credentials/applications/:id/credentials and its
 // administrator-only, audited .../:credentialId/reveal (api_secret,
 // account_hash_salt) and the webhook create / rotate-secret responses
-// (secret). Elsewhere only masked prefixes ("abcd…").
+// (secret). Elsewhere only masked prefixes ("abcd…"). The server's signing
+// keys (CONFIG_SIGNING_KEY, in every encoding) appear in no response at all.
 //
 // Every route of every router is called (the last test fails if a route is
 // added without a case here) and each response is scanned by
@@ -38,6 +39,8 @@ import { ingestionRouter } from "../src/ingestion/routes";
 import { ipRiskRouter } from "../src/ipRisk/routes";
 import { riskRouter } from "../src/risk/routes";
 import { reputationRouter } from "../src/reputation/routes";
+import { deviceConfigRouter, remoteConfigAdminRouter } from "../src/remoteConfig/routes";
+import { configKeyId, configPublicKey } from "../src/remoteConfig/signing";
 import { privacyRouter } from "../src/privacy/deviceErasure";
 import { sdkDistributionRouter } from "../src/sdk-distribution/routes";
 import { webhooksRouter } from "../src/webhooks/routes";
@@ -52,7 +55,11 @@ import { signRiskEnvelope } from "./riskSupport";
 
 // Random per run: test values only, never printed (failure messages name a secret by label).
 const random = (bytes: number, encoding: BufferEncoding = "hex") => crypto.randomBytes(bytes).toString(encoding);
+const CONFIG_KEY = crypto.generateKeyPairSync("ed25519").privateKey;
+const CONFIG_KEY_PKCS8 = (CONFIG_KEY.export({ type: "pkcs8", format: "der" }) as Buffer).toString("base64");
+const CONFIG_KEY_SEED = CONFIG_KEY.export({ format: "jwk" }).d as string; // base64url of the 32-byte private seed
 const ENV = {
+  CONFIG_SIGNING_KEY: CONFIG_KEY_PKCS8,
   JWT_SECRET: random(32),
   CREDENTIAL_ENCRYPTION_KEY: random(32),
   PUBLIC_INGESTION_URL: "https://ingest.example.test/v1/events",
@@ -103,6 +110,10 @@ function knownSecrets(): KnownSecret[] {
   remember("new user's password", NEW_USER_PASSWORD);
   remember("JWT signing key", ENV.JWT_SECRET);
   remember("credential encryption key", ENV.CREDENTIAL_ENCRYPTION_KEY);
+  remember("config signing key (PKCS#8)", CONFIG_KEY_PKCS8);
+  remember("config signing key (seed, base64url)", CONFIG_KEY_SEED);
+  remember("config signing key (seed, base64)", Buffer.from(CONFIG_KEY_SEED, "base64url").toString("base64"));
+  remember("config signing key (seed, hex)", Buffer.from(CONFIG_KEY_SEED, "base64url").toString("hex"));
   return [...remembered].map(([value, label]) => ({ label, value }));
 }
 
@@ -383,6 +394,7 @@ test("credentials: issuing is the one response with api_secret and account_hash_
   const stored = db.rows("apiCredential").find((c) => c.apiKey === issued.body.api_key)!;
   assert.equal(decryptSecret(stored.apiSecretEncrypted as string), issued.body.api_secret);
   assert.equal(issued.body.account_hash_salt, SALT1);
+  assert.equal(issued.body.config_public_key, configPublicKey(), "the public half only");
 
   // An application created before salts existed gets one now, audited without the value.
   const legacy = await call(
@@ -483,6 +495,23 @@ test("privacy: erasing an unknown device answers 404 and carries no secret", asy
 
 // ── SDK-facing endpoints: error responses ────────────────────────────────
 
+test("remote config: dashboard and device responses carry no private key", async () => {
+  const admin = "/v1/apps/app-1/remote-config";
+  await call("GET /v1/config", "/v1/config", 401, { as: "none" });
+  await call("GET /v1/config", "/v1/config", 404, { as: "none", headers: { "X-Api-Key": "rasp_live_cred1" } });
+  await call("PUT /v1/apps/:id/remote-config", admin, 400, { body: { settings: { ingestionUrl: "https://evil.example" } } });
+  await call("PUT /v1/apps/:id/remote-config", admin, 403, { as: "member", body: { settings: {} } });
+  await call("PUT /v1/apps/:id/remote-config", admin, 201, { body: { settings: { detectors: { root_jailbreak: true }, pollIntervalSeconds: 5 } } });
+  await call("POST /v1/apps/:id/remote-config/rollback", `${admin}/rollback`, 201, { body: { version: 1 } });
+  const view = await call("GET /v1/apps/:id/remote-config", admin, 200);
+  assert.equal(view.body.keyId, configKeyId());
+  await call("GET /v1/apps/:id/remote-config", "/v1/apps/app-other/remote-config", 404);
+  const signed = await call("GET /v1/config", "/v1/config", 200, { as: "none", headers: { "X-Api-Key": "rasp_live_cred1", "X-Device-Key-Id": "KEYID-1" } });
+  const publicKey = crypto.createPublicKey({ key: Buffer.from(configPublicKey()!, "base64"), format: "der", type: "spki" });
+  assert.ok(crypto.verify(null, Buffer.from(signed.body.payload as string, "utf8"), publicKey, Buffer.from(signed.body.signature as string, "base64")));
+  await call("GET /v1/config", "/v1/config", 304, { as: "none", headers: { "X-Api-Key": "rasp_live_cred1", "If-None-Match": '"2"' } });
+});
+
 test("SDK endpoints: signature and validation errors carry no secret", async () => {
   const batch = JSON.stringify({ events: "not-a-list" });
   await call("POST /v1/events", "/v1/events", 401, { as: "none", rawBody: batch, headers: hmacHeaders("rasp_live_cred1", null, batch) });
@@ -552,6 +581,7 @@ test("every route of every router was scanned above", () => {
     ["/v1/sdk", sdkDistributionRouter], ["/v1/events", ingestionRouter], ["/v1/devices", devicesRouter],
     ["/v1/dashboard", dashboardRouter], ["/v1/webhooks", webhooksRouter], ["/v1/ip-risk", ipRiskRouter],
     ["/v1/risk", riskRouter], ["/v1/reputation", reputationRouter], ["/v1/privacy", privacyRouter],
+    ["/v1/config", deviceConfigRouter], ["/v1/apps/:id/remote-config", remoteConfigAdminRouter],
   ];
   const routes = new Set<string>(["GET /healthz"]);
   for (const [prefixPath, router] of mounted) {
