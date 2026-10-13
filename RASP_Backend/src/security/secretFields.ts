@@ -13,7 +13,10 @@ import { decryptSecret } from "../crypto/secretBox";
  * - `apiSecretEncrypted` / `api_secret` — the credential's HMAC secret;
  * - `accountHashSalt` / `account_hash_salt` — the SDK's id-hash salt;
  * - `secretEncrypted` / `secret` — the webhook signing secret;
- * - `passwordHash` / `password` — user passwords.
+ * - `passwordHash` / `password` — user passwords;
+ * - `CONFIG_SIGNING_KEY` / `REPUTATION_SIGNING_KEY` / `privateKey` — the
+ *   server's Ed25519 signing keys, which no response returns at all (only
+ *   their public halves, `config_public_key` / `reputation_public_key`).
  */
 export const SECRET_FIELD_NAMES = [
   "apiSecret",
@@ -25,6 +28,12 @@ export const SECRET_FIELD_NAMES = [
   "secretEncrypted",
   "passwordHash",
   "password",
+  // Server signing keys (remote config, reputation list): environment only, never in a response.
+  "CONFIG_SIGNING_KEY",
+  "REPUTATION_SIGNING_KEY",
+  "privateKey",
+  "private_key",
+  "signingKey",
 ] as const;
 
 const SECRET_FIELD_SET = new Set<string>(SECRET_FIELD_NAMES.map((name) => name.toLowerCase()));

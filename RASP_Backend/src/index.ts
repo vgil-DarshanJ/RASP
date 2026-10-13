@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createApp } from "./app";
 import { startRetentionSchedule } from "./privacy/retention";
-import { configurationProblems } from "./startupChecks";
+import { configurationProblems, configurationWarnings } from "./startupChecks";
 
 const problems = configurationProblems();
 if (problems.length > 0) {
@@ -9,6 +9,7 @@ if (problems.length > 0) {
   console.error("[startup] Copy .env.example to .env and fill it in.");
   process.exit(1);
 }
+for (const warning of configurationWarnings()) console.warn(`[startup] warning: ${warning}`);
 
 const app = createApp();
 const host = process.env.HOST || "0.0.0.0";

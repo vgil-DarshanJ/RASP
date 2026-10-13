@@ -5,7 +5,7 @@
  *   npm run check:config
  */
 import "dotenv/config";
-import { configurationProblems } from "../src/startupChecks";
+import { configurationProblems, configurationWarnings } from "../src/startupChecks";
 
 const problems = configurationProblems();
 if (problems.length === 0) {
@@ -14,3 +14,4 @@ if (problems.length === 0) {
   for (const problem of problems) console.log(`- ${problem}`);
   process.exitCode = 1;
 }
+for (const warning of configurationWarnings()) console.log(`warning: ${warning}`);

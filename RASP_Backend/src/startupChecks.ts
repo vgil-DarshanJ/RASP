@@ -1,3 +1,5 @@
+import { configSigningKey } from "./remoteConfig/signing";
+
 /**
  * Configuration checks before the server starts (F-18). Returns the
  * problems; the caller refuses to start when there are any. Never includes
@@ -28,4 +30,20 @@ export function configurationProblems(env: NodeJS.ProcessEnv = process.env): str
     }
   }
   return problems;
+}
+
+/**
+ * Settings the server starts without, but with a feature switched off.
+ * Never includes a value.
+ * - CONFIG_SIGNING_KEY missing or not an Ed25519 PKCS#8 key: remote
+ *   configuration cannot be published or served (Task 10.0).
+ */
+export function configurationWarnings(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = [];
+  if (!env.CONFIG_SIGNING_KEY?.trim()) {
+    warnings.push("CONFIG_SIGNING_KEY is not set: remote configuration is off (npm run config:keygen)");
+  } else if (!configSigningKey(env)) {
+    warnings.push("CONFIG_SIGNING_KEY is not a Base64 Ed25519 PKCS#8 key: remote configuration is off (npm run config:keygen)");
+  }
+  return warnings;
 }
