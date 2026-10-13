@@ -184,6 +184,7 @@ enum CredentialAuditAction {
   REVOKED
   REACTIVATED
   DELETED
+  REVEALED
 }
 
 /// Who issued/revoked which credential, when, from where — the audit

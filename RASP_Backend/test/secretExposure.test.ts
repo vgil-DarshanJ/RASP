@@ -1,7 +1,8 @@
 // No response may contain a secret (Task 8.2): the API secret (plaintext or
 // encrypted), the account-hash salt, the webhook signing secret, password
 // hashes or passwords. The only exceptions are the responses that create or
-// rotate one: POST /v1/credentials/applications/:id/credentials (api_secret,
+// rotate one: POST /v1/credentials/applications/:id/credentials and its
+// administrator-only, audited .../:credentialId/reveal (api_secret,
 // account_hash_salt) and the webhook create / rotate-secret responses
 // (secret). Elsewhere only masked prefixes ("abcd…").
 //
@@ -151,7 +152,7 @@ async function call(route: string, path: string, expectedStatus: number, options
   const known = knownSecrets().filter((s) => !allowedValues.has(s.value));
   const leaks = findSecretLeaks(text, known, { allowedFields: options.allowedFields });
   assert.deepEqual(leaks, [], `${route} leaks: ${leaks.join("; ")}`);
-  return { status: res.status, body, text };
+  return { status: res.status, body, text, headers: res.headers };
 }
 
 const hmacHeaders = (apiKey: string, secret: string | null, rawBody: string) => {
@@ -396,6 +397,24 @@ test("credentials: issuing is the one response with api_secret and account_hash_
   assert.deepEqual(generated.map((l) => [l.action, l.newValue]), [["ACCOUNT_HASH_SALT_GENERATED", null]]);
 
   await call("POST /v1/credentials/applications/:applicationId/credentials", "/v1/credentials/applications/app-other/credentials", 404);
+});
+
+test("credentials: reveal shows an ACTIVE credential again (audited), never a revoked or foreign one", async () => {
+  const at = (app: string, id: string) => `/v1/credentials/applications/${app}/credentials/${id}/reveal`;
+  const route = "POST /v1/credentials/applications/:applicationId/credentials/:credentialId/reveal";
+  const shown = await call(route, at("app-1", "cred-1"), 200, { allowedFields: ["api_secret", "account_hash_salt"] });
+  assert.deepEqual(
+    [shown.body.api_key, shown.body.api_secret, shown.body.account_hash_salt, shown.body.ingestion_url],
+    ["rasp_live_cred1", SECRET1, SALT1, ENV.PUBLIC_INGESTION_URL],
+  );
+  assert.equal(shown.headers.get("cache-control"), "no-store");
+  const audit = db.rows("credentialAuditLog").filter((l) => l.credentialId === "cred-1" && l.action === "REVEALED");
+  assert.deepEqual(audit.map((l) => l.performedByUserId), ["u-owner"]);
+
+  await call(route, at("app-1", "cred-2"), 400); // revoked
+  await call(route, at("app-1", "cred-missing"), 404);
+  await call(route, at("app-other", "cred-1"), 404); // another organization's application
+  await call(route, at("app-1", "cred-1"), 403, { as: "member" });
 });
 
 test("credentials: there is no endpoint that returns the salt of an existing application", async () => {

@@ -70,6 +70,7 @@ const DESTRUCTIVE: Array<[string, string, unknown?]> = [
   ["POST", "/v1/credentials/applications/app-1/credentials"],
   ["POST", "/v1/credentials/applications/app-1/credentials/cred-1/revoke"],
   ["POST", "/v1/credentials/applications/app-1/credentials/cred-1/unrevoke"],
+  ["POST", "/v1/credentials/applications/app-1/credentials/cred-1/reveal"],
   ["DELETE", "/v1/credentials/applications/app-1/credentials/cred-1"],
   ["PUT", "/v1/webhooks/applications/app-1", { url: "https://hooks.bank.example/other", minSeverity: "HIGH", enabled: true }],
   ["POST", "/v1/webhooks/applications/app-1/rotate-secret"],

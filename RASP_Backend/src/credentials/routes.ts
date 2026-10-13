@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { SDK_CATALOG } from "../sdk-distribution/catalog";
-import { encryptSecret } from "../crypto/secretBox";
+import { decryptSecret, encryptSecret } from "../crypto/secretBox";
 import { publicIngestionUrl } from "./ingestionUrl";
 import { ensureAccountHashSalt } from "../risk/accountHashSalt";
 import { maskEncryptedSecret, maskSecret } from "../security/secretFields";
@@ -30,8 +30,8 @@ credentialsRouter.use(requireAuth);
  *  Includes `ingestionUrl` (same value `POST .../credentials` stamps
  *  onto the one-time-reveal JSON at issuance) so the Licenses page's
  *  "copy config" action can reassemble everything BUT the secret for an
- *  already-issued credential — the secret itself is never recoverable
- *  here, on purpose; see that route's own doc. */
+ *  already-issued credential — the secret is never returned here; an
+ *  administrator uses `/reveal` (audited) for the full credential JSON. */
 credentialsRouter.get("/", async (req: AuthedRequest, res) => {
   const credentials = await prisma.apiCredential.findMany({
     where: { application: { organizationId: req.user!.organizationId }, deletedAt: null },
@@ -139,9 +139,10 @@ async function assertOwnedApplication(applicationId: string, organizationId: str
  *  Writes a `CredentialAuditLog` row so who-issued-what-when is never
  *  reconstructed after the fact from application logs alone.
  *
- *  The ONLY endpoint that returns `api_secret` and `account_hash_salt` in
- *  full (issuing a new credential is also how a credential is rotated).
- *  Everything else shows masked prefixes — see security/secretFields.ts. */
+ *  With `/reveal` below, the only endpoints that return `api_secret` and
+ *  `account_hash_salt` in full (issuing a new credential is also how a
+ *  credential is rotated). Everything else shows masked prefixes — see
+ *  security/secretFields.ts. */
 credentialsRouter.post("/applications/:applicationId/credentials", requireAdminRole, async (req: AuthedRequest, res) => {
   const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
   if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
@@ -164,30 +165,82 @@ credentialsRouter.post("/applications/:applicationId/credentials", requireAdminR
     return created;
   });
 
-  const catalogEntry = SDK_CATALOG.find((s) => s.platform === app.platform);
   // Generated here for applications created before salts existed.
   const accountHashSalt = await ensureAccountHashSalt(app.id, { userId: req.user!.userId, ipAddress: req.ip });
 
-  res.status(201).json({
-    organization_id: req.user!.organizationId,
+  res.setHeader("Cache-Control", "no-store");
+  res
+    .status(201)
+    .json(credentialJson(app, { apiKey, apiSecret, accountHashSalt, issuedAt: credential.createdAt }, req.user!.organizationId));
+});
+
+/** The downloadable credential JSON the SDK is configured with. */
+function credentialJson(
+  app: { id: string; name: string; platform: string },
+  c: { apiKey: string; apiSecret: string; accountHashSalt: string; issuedAt: Date },
+  organizationId: string,
+) {
+  const catalogEntry = SDK_CATALOG.find((s) => s.platform === app.platform);
+  return {
+    organization_id: organizationId,
     application_id: app.id,
     application_name: app.name,
     platform: app.platform,
-    api_key: apiKey,
-    api_secret: apiSecret, // shown ONCE — not retrievable again after this response
+    api_key: c.apiKey,
+    api_secret: c.apiSecret,
     // Key for the SDK's account/session/beneficiary hashes (HMAC-SHA256);
     // same for every credential of the application.
-    account_hash_salt: accountHashSalt,
+    account_hash_salt: c.accountHashSalt,
     ingestion_url: publicIngestionUrl(),
     // Public key of the malware reputation list (not secret); null when not configured.
     reputation_public_key: reputationPublicKey(),
     sdk_min_version: catalogEntry?.minVersion ?? null,
-    issued_at: credential.createdAt.toISOString(),
-  });
-});
+    issued_at: c.issuedAt.toISOString(),
+  };
+}
 
-// There is deliberately no endpoint that returns the account-hash salt of an
-// existing application: it comes only with a newly issued credential (above).
+/** Shows the credential JSON of an existing ACTIVE credential again, so an
+ *  administrator can hand the same credential to another tester without
+ *  issuing a new one. The secret is stored AES-GCM encrypted (ingestion
+ *  needs it to verify signatures), so it can be decrypted here.
+ *  OWNER/ADMIN only; every view is written to the credential audit log
+ *  (REVEALED). A revoked or deleted credential is never shown. */
+credentialsRouter.post(
+  "/applications/:applicationId/credentials/:credentialId/reveal",
+  requireAdminRole,
+  async (req: AuthedRequest, res) => {
+    const app = await assertOwnedApplication(req.params.applicationId, req.user!.organizationId);
+    if (!app) return res.status(404).json({ error: "APPLICATION_NOT_FOUND" });
+
+    const credential = await prisma.apiCredential.findFirst({
+      where: { id: req.params.credentialId, applicationId: app.id, deletedAt: null },
+    });
+    if (!credential) return res.status(404).json({ error: "CREDENTIAL_NOT_FOUND" });
+    if (credential.status !== "ACTIVE") return res.status(400).json({ error: "CREDENTIAL_NOT_ACTIVE" });
+
+    await prisma.credentialAuditLog.create({
+      data: { credentialId: credential.id, action: "REVEALED", performedByUserId: req.user!.userId, ipAddress: req.ip },
+    });
+    const accountHashSalt = await ensureAccountHashSalt(app.id, { userId: req.user!.userId, ipAddress: req.ip });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json(
+      credentialJson(
+        app,
+        {
+          apiKey: credential.apiKey,
+          apiSecret: decryptSecret(credential.apiSecretEncrypted),
+          accountHashSalt,
+          issuedAt: credential.createdAt,
+        },
+        req.user!.organizationId,
+      ),
+    );
+  },
+);
+
+// There is deliberately no endpoint that returns only the account-hash salt
+// of an application: it comes inside a credential JSON (issue or reveal, above).
 
 credentialsRouter.post(
   "/applications/:applicationId/credentials/:credentialId/revoke",
