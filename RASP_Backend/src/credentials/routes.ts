@@ -10,6 +10,7 @@ import { ensureAccountHashSalt } from "../risk/accountHashSalt";
 import { maskEncryptedSecret, maskSecret } from "../security/secretFields";
 import { requireAdminRole } from "../auth/roles";
 import { reputationPublicKey } from "../reputation/reputationList";
+import { configPublicKey } from "../remoteConfig/signing";
 
 export const credentialsRouter = Router();
 credentialsRouter.use(requireAuth);
@@ -194,6 +195,8 @@ function credentialJson(
     ingestion_url: publicIngestionUrl(),
     // Public key of the malware reputation list (not secret); null when not configured.
     reputation_public_key: reputationPublicKey(),
+    // Public key that signs the remote configuration (GET /v1/config; not secret); null when not configured.
+    config_public_key: configPublicKey(),
     sdk_min_version: catalogEntry?.minVersion ?? null,
     issued_at: c.issuedAt.toISOString(),
   };

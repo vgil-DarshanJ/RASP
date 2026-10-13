@@ -21,6 +21,7 @@ import { ipRiskRouter } from "./ipRisk/routes";
 import { riskRouter } from "./risk/routes";
 import { reputationRouter } from "./reputation/routes";
 import { privacyRouter } from "./privacy/deviceErasure";
+import { deviceConfigRouter, remoteConfigAdminRouter } from "./remoteConfig/routes";
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 import { logError } from "./security/secretFields";
 import { allowedOrigins } from "./security/origins";
@@ -53,6 +54,7 @@ export function createApp() {
   });
 
   app.use("/v1/auth", authRouter);
+  app.use("/v1/apps/:id/remote-config", remoteConfigAdminRouter);
   app.use("/v1/apps", appsRouter);
   app.use("/v1/credentials", credentialsRouter);
   app.use("/v1/sdk", sdkDistributionRouter);
@@ -62,6 +64,7 @@ export function createApp() {
   app.use("/v1/webhooks", webhooksRouter);
   app.use("/v1/ip-risk", ipRiskRouter);
   app.use("/v1/reputation", reputationRouter);
+  app.use("/v1/config", deviceConfigRouter);
   app.use("/v1/privacy", privacyRouter);
 
   // Last-resort error handler — every route above is async; an unhandled

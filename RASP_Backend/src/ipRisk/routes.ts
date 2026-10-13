@@ -4,6 +4,7 @@ import { ApiKeyedRequest, requireApiKey } from "../middleware/apiKey";
 import type { RateCheck } from "../redis/deviceRateLimit";
 import { checkRateLimit } from "../redis/rateLimit";
 import { redisGeoCache } from "../redis/ipRiskCache";
+import { activeRemoteCountries } from "../remoteConfig/routes";
 import {
   GeoCache,
   GeoInfo,
@@ -40,11 +41,17 @@ export interface IpRiskDeps {
   registrationCountry?: (applicationId: string, deviceKeyId: string) => Promise<string | null>;
 }
 
-export const prismaApplicationPolicy = async (applicationId: string) =>
-  prisma.application.findUnique({
-    where: { id: applicationId },
-    select: { ipBlockedCountries: true, ipAllowedCountries: true },
-  }).then((app) => (app ? { blocked: app.ipBlockedCountries, allowed: app.ipAllowedCountries } : null));
+/** The app's lists; a list set by its active remote config (Task 10.0) takes the place of the app's own. */
+export const prismaApplicationPolicy = async (applicationId: string) => {
+  const [app, remote] = await Promise.all([
+    prisma.application.findUnique({
+      where: { id: applicationId },
+      select: { ipBlockedCountries: true, ipAllowedCountries: true },
+    }),
+    activeRemoteCountries(applicationId),
+  ]);
+  return app ? { blocked: remote.blocked ?? app.ipBlockedCountries, allowed: remote.allowed ?? app.ipAllowedCountries } : null;
+};
 
 export const prismaRegistrationCountry = async (applicationId: string, deviceKeyId: string) =>
   prisma.deviceRegistration.findUnique({
