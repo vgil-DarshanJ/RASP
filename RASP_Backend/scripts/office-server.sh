@@ -117,13 +117,24 @@ targets() {
   esac
 }
 
+# `docker compose` (v2 plugin) or `docker-compose` (v1). Postgres and Redis
+# may also run outside Docker: then this only warns.
+start_databases() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose up -d postgres redis && return 0
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose up -d postgres redis && return 0
+  fi
+  echo "warning: could not start postgres/redis with Docker Compose; continuing (they must already be running)."
+}
+
 deploy() {
   set -e
   echo "== Backend: $BE_DIR"
   cd "$BE_DIR"
   git pull --ff-only
   npm ci
-  docker compose up -d postgres redis
+  start_databases
   npx prisma generate
   npx prisma migrate deploy
   npm run build
