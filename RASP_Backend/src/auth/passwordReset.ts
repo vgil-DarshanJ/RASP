@@ -26,7 +26,7 @@ export function hashResetToken(token: string): string {
 
 /** The dashboard origin the link points at (DASHBOARD_URL; never taken from the request). */
 export function dashboardUrl(): string {
-  return (process.env.DASHBOARD_URL || "http://192.168.2.208:5555").trim().replace(/\/+$/, "");
+  return (process.env.DASHBOARD_URL || "http://192.168.2.208:5050").trim().replace(/\/+$/, "");
 }
 
 export function resetLink(token: string): string {

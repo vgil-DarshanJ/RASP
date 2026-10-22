@@ -12,3 +12,6 @@ dist/
 deploy/production.env
 deploy/backups/
 deploy/reputation/
+
+# scripts/office-server.sh: logs and pids on the office server.
+.office-server/

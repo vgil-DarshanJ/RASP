@@ -25,6 +25,9 @@ import { deviceConfigRouter, remoteConfigAdminRouter } from "./remoteConfig/rout
 import { applyTrustProxy, jsonBodyParser } from "./middleware/requestSetup";
 import { logError } from "./security/secretFields";
 import { allowedOrigins } from "./security/origins";
+import { REQUEST_ID_HEADER, trackRequests } from "./monitoring/requestTracking";
+import { safeMessage } from "./monitoring/problemLog";
+import { systemRouter } from "./monitoring/routes";
 
 export function createApp() {
   const app = express();
@@ -32,7 +35,10 @@ export function createApp() {
   // Client IP behind a proxy (TRUST_PROXY) — see requestSetup.ts.
   applyTrustProxy(app);
 
-  app.use(cors({ origin: allowedOrigins(), credentials: true }));
+  // X-Request-Id + the System Status page's request/error log — see monitoring/.
+  app.use(trackRequests);
+
+  app.use(cors({ origin: allowedOrigins(), credentials: true, exposedHeaders: [REQUEST_ID_HEADER] }));
 
   // Risk events: own 16 KB JSON parser (413 above it), so mounted before the
   // app-wide 1 MB parser below — see risk/routes.ts.
@@ -66,6 +72,7 @@ export function createApp() {
   app.use("/v1/reputation", reputationRouter);
   app.use("/v1/config", deviceConfigRouter);
   app.use("/v1/privacy", privacyRouter);
+  app.use("/v1/system", systemRouter);
 
   // Last-resort error handler — every route above is async; an unhandled
   // rejection must still resolve to a JSON 500, never an unhandled crash
@@ -73,7 +80,9 @@ export function createApp() {
   // The response never carries the error; the log redacts secret values
   // (a Prisma error prints the data it was given, e.g. a new salt).
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    logError("[unhandled]", err);
+    logError(`[unhandled] request ${res.locals.requestId ?? "-"}`, err);
+    // One redacted line for the System Status page; never sent to the caller.
+    res.locals.errorMessage = safeMessage(err);
     if (!res.headersSent) {
       res.status(500).json({ error: "INTERNAL_SERVER_ERROR" });
     }

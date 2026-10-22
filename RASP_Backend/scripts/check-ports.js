@@ -40,7 +40,8 @@ function extractPort(urlLike, fallback) {
 
 const PORTS = [
   { port: Number(process.env.PORT) || 4444, label: "Backend API (Express)" },
-  { port: Number(process.env.FRONTEND_PORT) || 5555, label: "Frontend (Next.js)" },
+  { port: Number(process.env.FRONTEND_PORT) || 5050, label: "Customer portal (Next.js)" },
+  { port: Number(process.env.VISITOR_PORT) || 6050, label: "Visitor site (Next.js)" },
   { port: extractPort(process.env.DATABASE_URL, 5432), label: "Postgres" },
   { port: extractPort(process.env.REDIS_URL, 6379), label: "Redis" },
 ];
