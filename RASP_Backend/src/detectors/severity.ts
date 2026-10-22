@@ -39,7 +39,7 @@ export const DETECTOR_SEVERITY: Record<string, DetectorSeverity> = {
   device_binding: "high",
   clone: "high",
   developer_mode: "low",
-  device_lock_missing: "medium",
+  device_lock_missing: "low",
   secure_hardware_unavailable: "low",
   device_fingerprint: "medium",
 
