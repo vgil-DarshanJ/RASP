@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://192.168.2.208:4444";
+import { API_BASE } from "./sites";
 
 export type SystemHealth = {
   status: "checking" | "healthy" | "degraded" | "unreachable";

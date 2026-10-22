@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
+  Cell,
   Line,
   LineChart,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { catalogFor } from "@/lib/alertCatalog";
+import { getStoredOrganization } from "@/lib/auth";
 import { apiFetch } from "@/lib/api-client";
 import {
   ActivityIcon,
@@ -43,6 +47,14 @@ interface RiskSummary {
 }
 
 const BRAND = "#1fa285";
+const DONUT_COLORS = ["#d28e15", "#e11d48", "#7c3aed", "#0891b2", "#ea580c", "#7784a3"];
+
+const RESOURCES = [
+  { href: "/controls", title: "Mobile App Controls", desc: "Self-assess your app against the OWASP MASVS-mapped checklist." },
+  { href: "/capabilities/screen-sharing-risk", title: "Watch: screen-share scam", desc: "Six signals from one video call, recorded on a real phone." },
+  { href: "/guide", title: "Integration guide", desc: "Add the SDK to Android native or Flutter in minutes." },
+  { href: "/plans", title: "Plans & subscription", desc: "Compare what each plan switches on." },
+];
 
 export default function DashboardPage() {
   const isDark = useIsDark();
@@ -92,14 +104,16 @@ export default function DashboardPage() {
     };
   }, [selectedAppId, statusFilter]);
 
-  const detectorChartData = useMemo(
-    () =>
-      Object.entries(detectorCounts)
-        .map(([detectorId, count]) => ({ detectorId, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 8),
-    [detectorCounts],
-  );
+  // Top 5 detector types plus "Other", for the occurrence donut.
+  const occurrence = useMemo(() => {
+    const sorted = Object.entries(detectorCounts)
+      .map(([detectorId, count]) => ({ title: catalogFor(detectorId).title, count }))
+      .sort((a, b) => b.count - a.count);
+    const rows = sorted.slice(0, 5);
+    const other = sorted.slice(5).reduce((s, r) => s + r.count, 0);
+    if (other > 0) rows.push({ title: "Other", count: other });
+    return { rows, total: sorted.reduce((s, r) => s + r.count, 0) };
+  }, [detectorCounts]);
 
   const volumeChartData = useMemo(() => {
     const byBucket = new Map<string, number>();
@@ -156,6 +170,33 @@ export default function DashboardPage() {
           <StatusDot tone="green" pulse />
           Live · updates every 15s · {selectedApp?.name}
         </p>
+      </div>
+
+      <div className="relative mb-6 overflow-hidden rounded-2xl border border-brand-400/25 bg-gradient-to-br from-navy-950 via-navy-900 to-black p-6 text-white">
+        <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-brand-500/25 blur-3xl" aria-hidden />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">
+              {getStoredOrganization()?.name ? `${getStoredOrganization()!.name}, ` : ""}your apps are reporting in.
+            </h2>
+            <p className="mt-1 text-sm text-white/60">Turn signals into decisions: triage alerts, check client risk, close control gaps.</p>
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-white/70">
+              {["Screen sharing & mirroring", "USB & device-lock posture", "Remote-access scam signals"].map((t) => (
+                <span key={t} className="flex items-center gap-1.5">
+                  <CheckCircleIcon size={13} className="text-brand-300" /> {t}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Link href="/alerts-inbox" className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-black hover:bg-brand-400">
+              Open Alerts Inbox
+            </Link>
+            <Link href="/apps" className="rounded-lg border border-white/20 px-4 py-2 text-sm font-medium text-white/85 hover:border-white/40">
+              Add application
+            </Link>
+          </div>
+        </div>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -240,26 +281,40 @@ export default function DashboardPage() {
 
       <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card className="p-5">
-          <h2 className="mb-4 text-sm font-semibold text-ink-700">Most common alert type — last 24h</h2>
-          {detectorChartData.length === 0 ? (
+          <h2 className="text-sm font-semibold text-ink-700">Threat occurrence — last 24h</h2>
+          <p className="mb-4 text-xs text-ink-400">Top 5 incident types for this application</p>
+          {occurrence.rows.length === 0 ? (
             <EmptyChart />
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={detectorChartData} layout="vertical" margin={{ left: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={gridColor} />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: axisColor }} axisLine={false} tickLine={false} />
-                <YAxis
-                  type="category"
-                  dataKey="detectorId"
-                  width={140}
-                  tick={{ fontSize: 12, fill: tickTextColor }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: isDark ? "rgba(31,162,133,0.12)" : "rgba(21,134,110,0.06)" }} />
-                <Bar dataKey="count" fill={BRAND} radius={[0, 4, 4, 0]} maxBarSize={18} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="flex flex-col items-center gap-6 sm:flex-row">
+              <div className="relative h-[200px] w-[200px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={occurrence.rows} dataKey="count" nameKey="title" innerRadius={68} outerRadius={92} paddingAngle={2} stroke="none">
+                      {occurrence.rows.map((r, i) => (
+                        <Cell key={r.title} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ChartTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-2xl font-semibold text-ink-900">{occurrence.total}</span>
+                  <span className="text-xs text-ink-400">Total</span>
+                </div>
+              </div>
+              <ul className="w-full space-y-2">
+                {occurrence.rows.map((r, i) => (
+                  <li key={r.title} className="flex items-center gap-2 border-b border-ink-100 pb-2 text-sm last:border-0">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+                    <span className="flex-1 truncate text-ink-700">{r.title}</span>
+                    <span className="text-xs text-ink-500">
+                      {Math.round((r.count / occurrence.total) * 100)}% ({r.count})
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </Card>
 
@@ -346,6 +401,18 @@ export default function DashboardPage() {
           </table>
         </div>
       </Card>
+
+      <div className="mb-3 mt-8 text-sm font-medium text-ink-500">Resources</div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {RESOURCES.map((r) => (
+          <Link key={r.href} href={r.href} className="group">
+            <Card className="h-full p-4 transition group-hover:border-brand-300">
+              <div className="text-sm font-semibold text-ink-900 group-hover:text-brand-700">{r.title} →</div>
+              <p className="mt-1 text-xs leading-relaxed text-ink-500">{r.desc}</p>
+            </Card>
+          </Link>
+        ))}
+      </div>
 
       {selectedEvent && (
         <EventDetailDrawer event={selectedEvent} onClose={() => setSelectedEvent(null)} />

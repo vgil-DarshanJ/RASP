@@ -34,6 +34,15 @@ export interface AlertCatalogEntry {
 }
 
 export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
+  remote_config_rejected: {
+    title: "Remote Config Rejected",
+    category: "App Integrity",
+    severity: "high",
+    description:
+      "The app refused a signed remote configuration (bad signature, wrong app, expired " +
+      "or rolled back) and kept the last good one.",
+  },
+
   // ── Original 4 lean controls ─────────────────────────────────────────
   screenshot_protection: {
     title: "Screenshot & Video Block",

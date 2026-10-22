@@ -10,14 +10,18 @@ import { AppSelectionProvider, useAppSelection } from "@/lib/app-selection";
 import { useIsDark } from "@/lib/useIsDark";
 import {
   ActivityIcon,
+  AlertCircleIcon,
   AlertTriangleIcon,
   BarChartIcon,
   BellIcon,
   BookOpenIcon,
+  BuildingIcon,
+  CheckCircleIcon,
   KeyIcon,
   LayersIcon,
   LockIcon,
   LogOutIcon,
+  MailIcon,
   MapPinIcon,
   PageLoader,
   PlatformIcon,
@@ -35,7 +39,12 @@ import { ThemeToggle } from "@/components/theme-toggle";
  *  Logs/Integration Guide are org-wide or platform-scoped, not scoped to
  *  one application. Kept as a literal list (not inferred from the nav)
  *  so a page choosing to opt in/out is an explicit, one-line decision. */
-const APP_SCOPED_ROUTES = ["/dashboard", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings"];
+const APP_SCOPED_ROUTES = [
+  "/dashboard",
+  "/alerts-inbox",
+  "/fraud-agents",
+  "/fraud-intelligence",
+  "/client-risk", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings"];
 
 function AppPickerBar() {
   const pathname = usePathname();
@@ -64,7 +73,7 @@ function AppPickerBar() {
           </select>
         </div>
         <span className="text-xs text-ink-400">
-          Applies across Dashboard, Analytics, Devices, Threats, Activations and Alerting
+          Applies to every per-app view
         </span>
       </div>
     </div>
@@ -73,17 +82,27 @@ function AppPickerBar() {
 
 /** Grouped sidebar nav. Every item here is backed by a real endpoint —
  *  see the "real-data tier" scoping decision: no page exists in this nav
- *  unless it reads genuine data (no mocked charts/lists). */
-const NAV_GROUPS: { label: string | null; items: { href: string; label: string; icon: typeof ActivityIcon }[] }[] = [
+ *  unless it reads genuine data (no mocked charts/lists). Mobile App
+ *  Controls is a self-assessment (answers kept in this browser); "Pro"
+ *  marks the modules sold with the fraud plans (see /plans). */
+const NAV_GROUPS: {
+  label: string | null;
+  items: { href: string; label: string; icon: typeof ActivityIcon; badge?: string }[];
+}[] = [
   {
-    label: null,
+    label: "CONTROL",
     items: [
-      { href: "/apps", label: "Applications", icon: LayersIcon },
       { href: "/dashboard", label: "Dashboard", icon: ActivityIcon },
+      { href: "/apps", label: "Applications", icon: LayersIcon },
+      { href: "/controls", label: "Mobile App Controls", icon: CheckCircleIcon },
+      { href: "/alerts-inbox", label: "Alerts Inbox", icon: MailIcon, badge: "Pro" },
+      { href: "/fraud-agents", label: "Fraud Prevention Agents", icon: ShieldIcon, badge: "Pro" },
+      { href: "/fraud-intelligence", label: "Fraud Intelligence", icon: SearchIcon, badge: "Pro" },
+      { href: "/client-risk", label: "Client Risk State", icon: AlertCircleIcon, badge: "Pro" },
     ],
   },
   {
-    label: "SECURITY",
+    label: "MONITORING",
     items: [
       { href: "/threats", label: "Live Threats", icon: AlertTriangleIcon },
       { href: "/analytics", label: "Threat Analytics", icon: BarChartIcon },
@@ -101,11 +120,13 @@ const NAV_GROUPS: { label: string | null; items: { href: string; label: string; 
     ],
   },
   {
-    label: "PLATFORM",
+    label: "MAINTENANCE",
     items: [
+      { href: "/status", label: "System Status", icon: ActivityIcon },
       { href: "/alerting", label: "Alerting", icon: BellIcon },
       { href: "/security-settings", label: "Security Settings", icon: LockIcon },
-      { href: "/guide", label: "Integration Guide", icon: BookOpenIcon },
+      { href: "/guide", label: "Documentation", icon: BookOpenIcon },
+      { href: "/plans", label: "Plans & Subscription", icon: BuildingIcon },
     ],
   },
 ];
@@ -202,7 +223,12 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
                         size={17}
                         className={active ? "text-brand-300" : "text-navy-500 group-hover:text-navy-300"}
                       />
-                      {item.label}
+                      <span className="flex-1 leading-tight">{item.label}</span>
+                      {item.badge && (
+                        <span className="rounded-full bg-brand-400/15 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-brand-300 ring-1 ring-inset ring-brand-400/25">
+                          {item.badge}
+                        </span>
+                      )}
                     </Link>
                   );
                 })}

@@ -1,8 +1,8 @@
 "use client";
 
 import { clearSession } from "./auth";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://192.168.2.208:4444";
+import { recordClientProblem } from "./clientProblems";
+import { API_BASE } from "./sites";
 
 export class ApiError extends Error {
   constructor(public status: number, public body: unknown) {
@@ -31,7 +31,15 @@ export async function apiFetch<T>(
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "include" });
+  const method = (options.method || "GET").toUpperCase();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: "include" });
+  } catch (err) {
+    // Never reached the backend: shown on the System Status page.
+    recordClientProblem({ method, path, status: 0 });
+    throw err;
+  }
 
   if (res.status === 401) {
     clearSession();
@@ -42,6 +50,14 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
+    const code = (body as { error?: unknown } | null)?.error;
+    recordClientProblem({
+      method,
+      path,
+      status: res.status,
+      code: typeof code === "string" ? code : undefined,
+      requestId: res.headers.get("X-Request-Id") ?? undefined,
+    });
     // The selected application was archived (or the list is stale): ask the
     // app picker to reload and choose a valid one. The page's own request
     // never settles, so it shows its loading state instead of an error

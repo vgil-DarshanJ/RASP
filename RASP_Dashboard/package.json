@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 5555",
+    "dev": "next dev --hostname 0.0.0.0 --port 5050",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0 --port 5555",
+    "start": "next start --hostname 0.0.0.0 --port 5050",
+    "start:portal": "next start --hostname 0.0.0.0 --port 5050",
+    "start:visitor": "next start --hostname 0.0.0.0 --port 6050",
     "lint": "next lint"
   },
   "dependencies": {

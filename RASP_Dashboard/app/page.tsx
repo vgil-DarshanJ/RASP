@@ -2,95 +2,51 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { hasSession } from "@/lib/auth";
 import { ShieldEmblem } from "@/components/shield-emblem";
+import { VisitorFooter, VisitorNav } from "@/components/visitor/visitor-shell";
+import { DemoVideo } from "@/components/visitor/demo-video";
+import { PlanCards } from "@/components/visitor/plan-cards";
 import {
-  ActivityIcon,
-  AlertTriangleIcon,
-  CheckIcon,
-  KeyIcon,
-  ScrollTextIcon,
-  ShieldIcon,
-  ZapIcon,
-} from "@/components/ui";
+  CAPABILITIES,
+  FEATURED_DEMO_IDS,
+  MODULES,
+  PLATFORM_SERVICES,
+  capabilitiesOf,
+  capabilityById,
+  moduleById,
+  titleOf,
+} from "@/lib/visitor/capabilities";
 
-/** Intro-sequence stages, in order. `checking` is the brief auth-gate
- *  moment (do we even show the splash, or bounce straight to the
- *  dashboard?) and renders nothing. */
+/** Intro-sequence stages, in order. `checking` decides whether to play the
+ *  intro at all (signed-in visitors and reduced motion skip it). */
 type Stage = "checking" | "loading" | "portal" | "reveal" | "hero";
 
-const NAV_LINKS = [
-  { href: "#detectors", label: "Detectors" },
-  { href: "#platform", label: "Platform" },
-  { href: "#security", label: "Security" },
-];
-
-const DETECTORS = [
-  {
-    icon: AlertTriangleIcon,
-    title: "Root & Jailbreak",
-    desc: "Catches rooted and jailbroken devices before they ever reach your API.",
-  },
-  {
-    icon: ZapIcon,
-    title: "Frida & Hooking",
-    desc: "Detects instrumentation frameworks and live runtime-hooking attempts.",
-  },
-  {
-    icon: ShieldIcon,
-    title: "Tamper & Repackaging",
-    desc: "Flags modified binaries, signature mismatches, and resigned builds.",
-  },
-  {
-    icon: ActivityIcon,
-    title: "MITM & Overlay",
-    desc: "Spots proxy interception, pinning bypass, and screen-overlay attacks.",
-  },
-];
-
 const STATS = [
-  { value: "42", label: "On-device detectors" },
-  { value: "ES256", label: "Device-signed event ingestion" },
-  { value: "Live", label: "Threat telemetry" },
-  { value: "2", label: "SDKs — Android native, Flutter (Android)" },
+  { value: String(CAPABILITIES.length), label: "On-device detectors" },
+  { value: String(MODULES.length), label: "Protection modules" },
+  { value: "6", label: "Server-side fraud agents" },
+  { value: "ES256", label: "Signed device telemetry" },
 ];
 
-const CAPABILITIES = [
-  "Per-application credentials with full issuance/revocation audit log",
-  "Replay-protected event ingestion — every payload signed, every replay rejected",
-  "Live dashboard — alert breakdown, volume trends, per-device drill-down",
-  "License and device-activation controls, enforced at the SDK",
-];
-
-/** RASHIELD's front page. Signed-in visitors skip straight to the
- *  dashboard (see the `checking` stage below) — the intro sequence is
- *  only for a first, logged-out landing: a loader that counts up, a
- *  zoom-through-the-mark transition, the shield emblem igniting with a
- *  ray burst, then the marketing page settling into place around it. */
+/** The visitor portal's front page: what the product protects against,
+ *  real-phone recordings of it working, and the plans. */
 export default function RootPage() {
-  const router = useRouter();
   const [stage, setStage] = useState<Stage>("checking");
   const [percent, setPercent] = useState(0);
   const skippedRef = useRef(false);
 
   useEffect(() => {
-    if (hasSession()) {
-      router.replace("/dashboard");
-      return;
-    }
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setStage(reduceMotion ? "hero" : "loading");
-  }, [router]);
+    setStage(reduceMotion || hasSession() || window.location.hash ? "hero" : "loading");
+  }, []);
 
-  // Loader counter — drives the "INITIALIZING SHIELD… NN%" readout.
   useEffect(() => {
     if (stage !== "loading") return;
     const start = Date.now();
-    const duration = 1500;
     const id = setInterval(() => {
       if (skippedRef.current) return;
-      const pct = Math.min(100, Math.round(((Date.now() - start) / duration) * 100));
+      const pct = Math.min(100, Math.round(((Date.now() - start) / 1300) * 100));
       setPercent(pct);
       if (pct >= 100) {
         clearInterval(id);
@@ -100,18 +56,21 @@ export default function RootPage() {
     return () => clearInterval(id);
   }, [stage]);
 
-  // Portal zoom → emblem reveal → hero, each a short timed handoff.
   useEffect(() => {
     if (stage === "portal") {
       const t = setTimeout(() => !skippedRef.current && setStage("reveal"), 480);
       return () => clearTimeout(t);
     }
     if (stage === "reveal") {
-      // Matches the 3D medallion's spin-in duration (see
-      // .animate-emblem-spin-in in globals.css) so the handoff to the
-      // idle-tilt animation lands after the spin settles, not mid-turn.
       const t = setTimeout(() => !skippedRef.current && setStage("hero"), 1100);
       return () => clearTimeout(t);
+    }
+  }, [stage]);
+
+  useEffect(() => {
+    // An anchor link (/#demos) lands after the content exists.
+    if (stage === "hero" && window.location.hash) {
+      document.querySelector(window.location.hash)?.scrollIntoView();
     }
   }, [stage]);
 
@@ -124,11 +83,10 @@ export default function RootPage() {
   const emblemVisible = stage === "reveal" || stage === "hero";
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
+    <div className="relative min-h-screen overflow-x-hidden bg-black text-white">
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute left-1/2 top-0 h-[56rem] w-[56rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-brand-500/25 blur-[120px]" />
-        <div className="absolute left-1/2 top-24 h-[26rem] w-[26rem] -translate-x-1/2 rounded-full bg-brand-300/15 blur-[100px]" />
-        <div className="absolute bottom-0 right-0 h-[32rem] w-[32rem] translate-x-1/3 translate-y-1/3 rounded-full bg-brand-400/15 blur-[100px]" />
+        <div className="absolute left-1/2 top-0 h-[56rem] w-[56rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-brand-500/20 blur-[120px]" />
+        <div className="absolute bottom-0 right-0 h-[32rem] w-[32rem] translate-x-1/3 translate-y-1/3 rounded-full bg-brand-400/10 blur-[100px]" />
         <div className="absolute bottom-0 left-0 h-[24rem] w-[24rem] -translate-x-1/3 translate-y-1/3 rounded-full bg-brand-600/10 blur-[100px]" />
       </div>
 
@@ -143,16 +101,11 @@ export default function RootPage() {
               <span>Initializing shield…</span>
               <span className="tabular-nums text-brand-300">{percent}%</span>
             </div>
-
             <ShieldEmblem size={128} />
-
             <div className="text-center leading-tight">
               <div className="text-lg font-bold tracking-[0.14em] text-white">RASHIELD</div>
-              <div className="mt-1 text-[10px] font-medium tracking-[0.18em] text-brand-300/80">
-                REAL-TIME APPLICATION SHIELD
-              </div>
+              <div className="mt-1 text-[10px] font-medium tracking-[0.18em] text-brand-300/80">REAL-TIME APPLICATION SHIELD</div>
             </div>
-
             <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]">
               <div
                 className="h-full rounded-full bg-brand-400 shadow-[0_0_10px_1px_rgba(234,168,40,0.6)] transition-[width] duration-75"
@@ -160,11 +113,7 @@ export default function RootPage() {
               />
             </div>
           </div>
-
-          <button
-            onClick={skipIntro}
-            className="absolute bottom-6 right-6 text-xs font-medium text-white/30 transition hover:text-white/70"
-          >
+          <button onClick={skipIntro} className="absolute bottom-6 right-6 text-xs font-medium text-white/30 transition hover:text-white/70">
             Skip →
           </button>
         </div>
@@ -172,167 +121,184 @@ export default function RootPage() {
 
       {emblemVisible && (
         <>
-          <nav className="animate-hero-rise relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6 lg:px-10">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/15 text-brand-300 ring-1 ring-brand-400/30">
-                <ShieldIcon size={16} />
-              </div>
-              <span className="text-sm font-bold tracking-[0.12em] text-white">RASHIELD</span>
-            </div>
-            <div className="hidden items-center gap-8 text-sm text-white/60 md:flex">
-              {NAV_LINKS.map((l) => (
-                <a key={l.href} href={l.href} className="transition hover:text-white">
-                  {l.label}
-                </a>
-              ))}
-            </div>
-            <div className="flex items-center gap-3">
-              <Link href="/login" className="text-sm font-medium text-white/70 transition hover:text-white">
-                Sign in
-              </Link>
-              <Link
-                href="/register"
-                className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-black shadow-glow transition hover:bg-brand-400"
-              >
-                Get Started
-              </Link>
-            </div>
-          </nav>
+          <div className="animate-hero-rise relative z-40">
+            <VisitorNav />
+          </div>
 
           <main className="relative z-10">
-            <div className="mx-auto flex max-w-6xl flex-col items-center px-6 pt-6 lg:px-10">
-              <div className="relative">
-                {stage === "reveal" && (
-                  <div
-                    className="animate-ray-burst absolute inset-0 rounded-full bg-brand-400/40 blur-2xl"
-                    aria-hidden
-                  />
-                )}
-                <ShieldEmblem size={240} spinIn={stage === "reveal"} />
-              </div>
-            </div>
-
-            <div className="animate-hero-rise flex justify-center px-6 pt-8">
-              <div className="inline-flex items-center gap-2 rounded-full border border-brand-400/25 bg-brand-400/[0.07] px-3.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-brand-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-brand-400 shadow-[0_0_8px_2px_rgba(234,168,40,0.7)]" />
-                Real-time runtime protection
-              </div>
-            </div>
-
-            <div className="animate-hero-rise mx-auto grid max-w-6xl grid-cols-1 items-end gap-10 px-6 pb-24 pt-8 lg:grid-cols-2 lg:px-10">
-              <h1 className="text-center text-5xl font-bold uppercase leading-[1.05] tracking-tight text-white sm:text-6xl lg:text-left lg:text-7xl">
-                Detect attacks.
-                <br />
-                <span className="text-brand-300">In real time.</span>
-              </h1>
-              <div className="text-center lg:text-left">
-                <p className="mx-auto max-w-md text-sm leading-relaxed text-white/55 lg:mx-0">
-                  RASHIELD is the runtime shield for mobile and web apps that can&apos;t afford to be
-                  wrong — root and jailbreak detection, anti-tampering, MITM defense, and live threat
-                  telemetry, wired straight into your SDK.
+            {/* ── Hero ─────────────────────────────────────────────── */}
+            <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-4 pb-16 pt-12 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:px-10">
+              <div className="animate-hero-rise text-center lg:text-left">
+                <div className="inline-flex items-center gap-2 rounded-full border border-brand-400/25 bg-brand-400/[0.07] px-3.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-brand-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-brand-400 shadow-[0_0_8px_2px_rgba(234,168,40,0.7)]" />
+                  Runtime protection for mobile banking
+                </div>
+                <h1 className="mt-6 text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+                  Your app knows
+                  <br />
+                  <span className="text-brand-300">when it&apos;s under attack.</span>
+                </h1>
+                <p className="mx-auto mt-5 max-w-lg text-[15px] leading-relaxed text-white/55 lg:mx-0">
+                  {CAPABILITIES.length} on-device detectors in {MODULES.length} modules — screen capture, USB and
+                  device-lock posture, remote-access scams, tampering and network interception — reporting signed
+                  evidence to a console your fraud team can act on.
                 </p>
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
-                  <Link
-                    href="/register"
-                    className="rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-semibold text-black shadow-glow transition hover:bg-brand-400"
-                  >
-                    Register your organization
-                  </Link>
-                  <Link
-                    href="/login"
-                    className="rounded-lg border border-white/15 px-5 py-2.5 text-sm font-medium text-white/80 transition hover:border-white/30 hover:text-white"
-                  >
-                    Sign in
+                <div className="mt-7 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+                  <a href="#demos" className="rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-semibold text-black shadow-glow transition hover:bg-brand-400">
+                    Watch it on a real phone
+                  </a>
+                  <Link href="/plans" className="rounded-lg border border-white/15 px-5 py-2.5 text-sm font-medium text-white/80 transition hover:border-white/30 hover:text-white">
+                    Compare plans
                   </Link>
                 </div>
               </div>
-            </div>
-
-            <section id="detectors" className="border-t border-white/[0.06] bg-white/[0.015] py-20">
-              <div className="mx-auto max-w-6xl px-6 lg:px-10">
-                <div className="mb-10 max-w-lg">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-300/80">
-                    Detectors
-                  </div>
-                  <h2 className="mt-2 text-2xl font-semibold text-white">
-                    42 detectors watching every device your app runs on.
-                  </h2>
-                </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {DETECTORS.map((d) => (
-                    <div
-                      key={d.title}
-                      className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5 transition hover:border-brand-400/25 hover:bg-white/[0.04]"
-                    >
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/15 text-brand-300">
-                        <d.icon size={17} />
-                      </div>
-                      <div className="mt-3 text-sm font-semibold text-white">{d.title}</div>
-                      <p className="mt-1.5 text-xs leading-relaxed text-white/50">{d.desc}</p>
-                    </div>
-                  ))}
-                </div>
+              <div className="relative mx-auto">
+                {stage === "reveal" && <div className="animate-ray-burst absolute inset-0 rounded-full bg-brand-400/40 blur-2xl" aria-hidden />}
+                <ShieldEmblem size={260} spinIn={stage === "reveal"} />
               </div>
             </section>
 
-            <section id="platform" className="border-t border-white/[0.06] py-20">
-              <div className="mx-auto max-w-6xl px-6 lg:px-10">
-                <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
-                  {STATS.map((s) => (
-                    <div key={s.label} className="text-center sm:text-left">
-                      <div className="text-3xl font-bold text-brand-300">{s.value}</div>
-                      <div className="mt-1 text-xs leading-snug text-white/45">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
+            <section className="border-y border-white/[0.06] bg-white/[0.015]">
+              <div className="mx-auto grid max-w-6xl grid-cols-2 gap-6 px-4 py-8 sm:grid-cols-4 sm:px-6 lg:px-10">
+                {STATS.map((s) => (
+                  <div key={s.label} className="text-center sm:text-left">
+                    <div className="text-3xl font-bold text-brand-300">{s.value}</div>
+                    <div className="mt-1 text-xs text-white/45">{s.label}</div>
+                  </div>
+                ))}
               </div>
             </section>
 
-            <section id="security" className="border-t border-white/[0.06] bg-white/[0.015] py-20">
-              <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 lg:grid-cols-2 lg:px-10">
-                <div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/15 text-brand-300">
-                    <KeyIcon size={18} />
-                  </div>
-                  <h2 className="mt-4 text-2xl font-semibold text-white">
-                    Every credential, every event, fully accounted for.
-                  </h2>
-                  <p className="mt-3 max-w-md text-sm leading-relaxed text-white/50">
-                    Issue and revoke per-application credentials, and see every action in an
-                    immutable audit trail — built for teams that get asked to prove it.
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {CAPABILITIES.map((c) => (
-                    <div
-                      key={c}
-                      className="flex items-start gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-xs leading-relaxed text-white/60"
-                    >
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-400/15 text-brand-300">
-                        <CheckIcon size={10} />
-                      </span>
-                      {c}
+            {/* ── Modules ──────────────────────────────────────────── */}
+            <section id="modules" className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-10">
+              <SectionHead eyebrow="Protection modules" title="Seven modules. Each one answers a different attack." />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {MODULES.map((m) => (
+                  <Link
+                    key={m.id}
+                    href={`/capabilities#${m.id}`}
+                    className="group rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5 transition hover:-translate-y-0.5 hover:border-brand-400/30 hover:bg-white/[0.04]"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`rounded-lg px-2 py-1 font-mono text-xs font-bold ring-1 ${m.accent.tile} ${m.accent.ring}`}>{m.code}</span>
+                      <span className="text-xs text-white/35">{capabilitiesOf(m.id).length} detectors</span>
                     </div>
-                  ))}
+                    <div className="mt-4 font-semibold text-white">{m.name}</div>
+                    <p className="mt-1.5 text-xs leading-relaxed text-white/50">{m.tagline}</p>
+                    <div className="mt-4 text-xs font-medium text-brand-300 opacity-0 transition group-hover:opacity-100">Explore →</div>
+                  </Link>
+                ))}
+              </div>
+            </section>
+
+            {/* ── Live demos ───────────────────────────────────────── */}
+            <FeaturedDemos />
+
+            {/* ── Screen-share showcase ────────────────────────────── */}
+            <ShareShowcase />
+
+            {/* ── Platform ─────────────────────────────────────────── */}
+            <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-10">
+              <SectionHead eyebrow="Beyond the device" title="Detection is half the job. The console turns it into decisions." />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {PLATFORM_SERVICES.map((s) => (
+                  <div key={s.name} className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
+                    <div className="font-semibold text-white">{s.name}</div>
+                    <p className="mt-1.5 text-sm leading-relaxed text-white/50">{s.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* ── Plans ────────────────────────────────────────────── */}
+            <section id="plans" className="border-t border-white/[0.06] bg-white/[0.015] py-20">
+              <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-10">
+                <SectionHead eyebrow="Plans" title="Start with the demo. Grow into fraud intelligence." />
+                <PlanCards />
+                <div className="mt-8 text-center">
+                  <Link href="/plans" className="text-sm font-medium text-brand-300 hover:text-brand-200">
+                    See the full feature comparison →
+                  </Link>
                 </div>
               </div>
             </section>
           </main>
 
-          <footer className="relative z-10 border-t border-white/[0.06] px-6 py-8 lg:px-10">
-            <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 text-xs text-white/35 sm:flex-row">
-              <span className="flex items-center gap-2">
-                <ScrollTextIcon size={13} />© {new Date().getFullYear()} RASHIELD — Real-Time
-                Application Shield
-              </span>
-              <div className="flex items-center gap-2">
-                <ShieldIcon size={13} />
-                Built on the RASP Shield runtime engine
-              </div>
-            </div>
-          </footer>
+          <VisitorFooter />
         </>
       )}
     </div>
+  );
+}
+
+function SectionHead({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div className="mb-10 max-w-2xl">
+      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-300/80">{eyebrow}</div>
+      <h2 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">{title}</h2>
+    </div>
+  );
+}
+
+function FeaturedDemos() {
+  const [active, setActive] = useState<string>(FEATURED_DEMO_IDS[0]);
+  const cap = capabilityById(active)!;
+  const mod = moduleById(cap.module);
+
+  return (
+    <section id="demos" className="scroll-mt-20 border-t border-white/[0.06] bg-white/[0.015] py-20">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-10">
+        <SectionHead eyebrow="Live demos" title="Recorded on a real phone. No mock-ups." />
+        <div className="grid gap-8 lg:grid-cols-[16rem_1fr]">
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-2 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0">
+            {FEATURED_DEMO_IDS.map((id) => {
+              const c = capabilityById(id)!;
+              const m = moduleById(c.module);
+              const on = id === active;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActive(id)}
+                  className={`shrink-0 rounded-xl px-4 py-3 text-left transition ${
+                    on ? "bg-brand-400/10 ring-1 ring-inset ring-brand-400/30" : "hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <div className={`font-mono text-[10px] font-bold ${m.accent.text}`}>{m.code}</div>
+                  <div className={`text-sm font-medium ${on ? "text-white" : "text-white/60"}`}>{titleOf(id)}</div>
+                </button>
+              );
+            })}
+          </div>
+          <div key={active} className="animate-hero-rise rounded-3xl border border-white/[0.07] bg-black/40 p-5 sm:p-8">
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              <span className={`rounded-md px-2 py-0.5 font-mono text-[11px] font-bold ring-1 ${mod.accent.tile} ${mod.accent.ring}`}>{mod.code}</span>
+              <span className="text-xs text-white/40">{mod.name}</span>
+            </div>
+            <h3 className="text-xl font-semibold">{titleOf(active)}</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/55">{cap.summary}</p>
+            <div className="mt-6">{cap.demo && <DemoVideo video={cap.demo.video} chapters={cap.demo.chapters} caption={cap.demo.caption} />}</div>
+            <Link href={`/capabilities/${cap.slug}`} className="mt-6 inline-block text-sm font-medium text-brand-300 hover:text-brand-200">
+              How it works and how to try it →
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ShareShowcase() {
+  const dxp = moduleById("dxp");
+  if (!dxp.showcase) return null;
+  return (
+    <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-10">
+      <SectionHead eyebrow="Scenario · screen-share scam" title="One video call. Six signals. The viewer sees a black screen." />
+      <p className="-mt-6 mb-10 max-w-2xl text-sm leading-relaxed text-white/50">
+        A fraudster asks the victim to share their screen on a call. The left phone runs the protected app; the right
+        phone is the other side of the call. Click a step to jump to it.
+      </p>
+      <DemoVideo video={dxp.showcase.video} chapters={dxp.showcase.chapters} />
+    </section>
   );
 }
