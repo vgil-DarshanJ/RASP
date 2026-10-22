@@ -303,12 +303,12 @@ const DEFS: Def[] = [
     id: "device_lock_missing",
     module: "dpa",
     summary:
-      "Reports when the phone has no screen lock (PIN, pattern, password or biometrics) — anyone holding it can open it, " +
-      "and the app's hardware-backed keys lose their user-authentication guarantee.",
+      "Checks the screen lock and the fingerprint. An enrolled fingerprint is a safety feature and reads SECURE; a phone with no fingerprint enrolled is a low-level finding, " +
+      "and a phone with no screen lock at all is open to anyone holding it, with the app's hardware-backed keys losing their user-authentication guarantee.",
     howToShow: [
       "Enable the feature.",
-      "Settings → Security → Screen lock → None: DETECTED.",
-      "Set a PIN again: SECURE.",
+      "Fingerprint enrolled in Settings → Security: SECURE.",
+      "Remove every fingerprint (or set Screen lock → None): DETECTED, low severity.",
     ],
     demo: {
       caption: "The phone opens with a plain swipe — no PIN, pattern or biometrics — and Device Lock reports it.",
@@ -379,11 +379,11 @@ const DEFS: Def[] = [
       "Hang up: SECURE.",
     ],
     demo: {
-      caption: "With a call running in the background, Call During App Use is raised on the first check.",
-      video: segment(32, 40, "call-during-app-use"),
+      caption: "Recorded on a real phone: with a call running in the background, Call During App Use is raised on the first check.",
+      video: { src: `${MEDIA}/call-during-app-use.mp4`, poster: `${MEDIA}/call-during-app-use.jpg` },
       chapters: [
-        { at: 32, label: "Open Call During App Use" },
-        { at: 35, label: "Call in progress → THREAT DETECTED" },
+        { at: 0, label: "Open Call During App Use" },
+        { at: 4, label: "Call in progress → THREAT DETECTED" },
       ],
     },
   },

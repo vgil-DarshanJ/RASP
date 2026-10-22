@@ -112,8 +112,8 @@ export const ALERT_CATALOG: Record<string, AlertCatalogEntry> = {
   device_lock_missing: {
     title: "Device Lock",
     category: "Device Integrity",
-    severity: "medium",
-    description: "Whether a PIN, pattern, password, or biometric lock is configured.",
+    severity: "low",
+    description: "Whether a screen lock is set and a fingerprint (or face) is enrolled. An enrolled fingerprint is safe; none enrolled is a low-level finding.",
   },
   secure_hardware_unavailable: {
     title: "Hardware-Backed Keystore",

@@ -27,21 +27,54 @@ export function DemoVideo({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [time, setTime] = useState(video.start ?? 0);
+  const [playing, setPlaying] = useState(false);
+  const [hintVisible, setHintVisible] = useState(false);
   const start = video.start ?? 0;
+  // A manual pause must not be overridden by the scroll-into-view autoplay.
+  const pausedByUser = useRef(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) el.play().catch(() => {});
-        else el.pause();
+        if (entry.isIntersecting) {
+          if (!pausedByUser.current) el.play().catch(() => {});
+        } else {
+          el.pause();
+        }
       },
       { threshold: 0.35 },
     );
     io.observe(el);
     return () => io.disconnect();
   }, []);
+
+  // Briefly reveal the play/pause sign, then fade it out after 2s.
+  function flashHint() {
+    setHintVisible(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setHintVisible(false), 2000);
+  }
+
+  useEffect(() => () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+  }, []);
+
+  // Click the video to toggle: one click pauses, the next resumes.
+  function toggle() {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) {
+      pausedByUser.current = false;
+      el.play().catch(() => {});
+    } else {
+      pausedByUser.current = true;
+      el.pause();
+    }
+    flashHint();
+  }
 
   function onTime() {
     const el = ref.current;
@@ -54,6 +87,7 @@ export function DemoVideo({
     const el = ref.current;
     if (!el) return;
     el.currentTime = at;
+    pausedByUser.current = false;
     el.play().catch(() => {});
   }
 
@@ -74,10 +108,34 @@ export function DemoVideo({
             if (ref.current && start > 0) ref.current.currentTime = start;
           }}
           onTimeUpdate={onTime}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
           className="aspect-[9/16] w-full object-cover"
           aria-label={caption ?? "Product demo recording"}
         />
-        <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-200 backdrop-blur">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pause video" : "Play video"}
+          className="absolute inset-0 z-10 flex items-center justify-center bg-transparent"
+        >
+          <span
+            className={`flex h-14 w-14 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition-opacity duration-500 ${
+              hintVisible ? "opacity-100" : "opacity-0"
+            }`}
+          >
+            {playing ? (
+              <svg viewBox="0 0 24 24" className="h-6 w-6 fill-current" aria-hidden="true">
+                <path d="M7 5h3.2v14H7zM13.8 5H17v14h-3.2z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" className="ml-0.5 h-6 w-6 fill-current" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </span>
+        </button>
+        <span className="pointer-events-none absolute left-3 top-3 z-20 inline-flex items-center gap-1.5 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-200 backdrop-blur">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" /> Real device
         </span>
       </div>
