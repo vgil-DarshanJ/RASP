@@ -27,7 +27,7 @@ export const SDK_CATALOG: SdkCatalogEntry[] = [
     platform: "ANDROID_NATIVE",
     displayName: "Android (Kotlin / Java)",
     available: true,
-    minVersion: "1.0.0",
+    minVersion: "1.1.0",
     minOsVersion: "Android 6.0 (API 23)",
     language: "Kotlin/Java",
     requirements: [
@@ -38,7 +38,7 @@ export const SDK_CATALOG: SdkCatalogEntry[] = [
     setupDocsPath: "android_native/README.md",
     // android_core is no longer bundled here — rasp_shield_native's own
     // build.gradle.kts now depends on it as a published JitPack artifact
-    // (com.github.Vedant0Nisar:RaShield-SDK), resolved automatically by
+    // (com.github.vgil-DarshanJ:RASP_SDK_1), resolved automatically by
     // Gradle. A consumer needs exactly this one folder, nothing else.
     sourcePath: ["android_native"],
   },
@@ -46,7 +46,7 @@ export const SDK_CATALOG: SdkCatalogEntry[] = [
     platform: "FLUTTER",
     displayName: "Flutter",
     available: true,
-    minVersion: "1.0.0",
+    minVersion: "1.1.0",
     minOsVersion: "Android 6.0 (API 23) via the plugin's Android side",
     language: "Dart",
     requirements: [
@@ -61,7 +61,7 @@ export const SDK_CATALOG: SdkCatalogEntry[] = [
     // every consumer to also download android_core AND manually wire it
     // into their own settings.gradle.kts (a real, previously-shipped gap).
     // The plugin now depends on android_core as a published JitPack
-    // artifact (com.github.Vedant0Nisar:RaShield-SDK) instead, resolved
+    // artifact (com.github.vgil-DarshanJ:RASP_SDK_1) instead, resolved
     // automatically by Gradle — so only `flutter/` needs to ship at all.
     sourcePath: ["flutter"],
   },
@@ -78,11 +78,19 @@ export const SDK_CATALOG: SdkCatalogEntry[] = [
   {
     platform: "REACT_NATIVE",
     displayName: "React Native",
-    available: false,
-    minVersion: "not yet released",
-    minOsVersion: "TBD",
+    available: true,
+    minVersion: "1.1.0",
+    minOsVersion: "Android 7.0 (API 24); iOS not yet supported",
     language: "TypeScript/JavaScript",
-    requirements: [],
-    setupDocsPath: "",
+    requirements: [
+      "React Native 0.76+ (New or Old Architecture)",
+      "Android minSdk 24+",
+      "Autolinking (standard in any React Native app)",
+      "INTERNET permission (merges automatically from the engine's own manifest)",
+    ],
+    setupDocsPath: "react_native/rasp_shield_react_native/README.md",
+    // The plugin binds the same android-core engine (JitPack) as the Flutter
+    // plugin; only the plugin folder ships. Its Gradle file adds JitPack itself.
+    sourcePath: ["react_native"],
   },
 ];

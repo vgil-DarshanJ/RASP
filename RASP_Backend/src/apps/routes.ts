@@ -27,9 +27,9 @@ const createAppSchema = z.object({
   platform: z.enum(["ANDROID_NATIVE", "FLUTTER", "IOS", "REACT_NATIVE"]),
 });
 
-/** Only ANDROID_NATIVE/FLUTTER have a real SDK today — see sdk-distribution
- *  for the catalog metadata the FE renders as "available" vs "coming soon"
- *  cards. Registration itself is not blocked for IOS/REACT_NATIVE (an org
+/** ANDROID_NATIVE, FLUTTER and REACT_NATIVE have a real SDK today — see
+ *  sdk-distribution for the catalog metadata the FE renders as "available" vs
+ *  "coming soon" cards. Registration itself is not blocked for IOS (an org
  *  may want to reserve/plan an integration ahead of the SDK shipping), the
  *  download step is what's gated. */
 appsRouter.post("/", async (req: AuthedRequest, res) => {
