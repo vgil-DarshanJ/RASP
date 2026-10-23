@@ -325,6 +325,86 @@ class TransferActivity : AppCompatActivity() {
   ];
 }
 
+function reactNativeSteps(): { title: string; body: React.ReactNode }[] {
+  return [
+    {
+      title: "1. Add the plugin to your app",
+      body: (
+        <div className="space-y-2 text-sm text-ink-600">
+          <p>
+            Unzip the downloaded SDK next to your app and install the{" "}
+            <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">rasp_shield_react_native</code> folder as a
+            local dependency. React Native autolinks it; the detection engine comes from JitPack, which the plugin adds to
+            Gradle for you.
+          </p>
+          <CodeBlock>{`npm install ../rasp-shield-react-native/react_native/rasp_shield_react_native
+# then rebuild the Android app`}</CodeBlock>
+        </div>
+      ),
+    },
+    {
+      title: "2. Declare the permissions your detectors need",
+      body: (
+        <div className="space-y-2 text-sm text-ink-600">
+          <p>
+            Add only what you use to <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">AndroidManifest.xml</code>:
+            READ_PHONE_STATE (SIM change, call during app use), DETECT_SCREEN_CAPTURE (screenshot event),
+            DETECT_SCREEN_RECORDING (screen recording), ACCESS_WIFI_STATE and ACCESS_NETWORK_STATE (unsafe Wi-Fi).
+          </p>
+        </div>
+      ),
+    },
+    {
+      title: "3. Save the credential and start a session",
+      body: (
+        <div className="space-y-2 text-sm text-ink-600">
+          <p>
+            Paste the <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">credential.json</code> you downloaded
+            for this application. The secret stays in encrypted native storage and never returns to JavaScript. Config field
+            names match the Kotlin column in the table below.
+          </p>
+          <CodeBlock>{`import { RaspEventShipper, configFromDetectors, useRaspSession } from "rasp-shield-react-native";
+
+await RaspEventShipper.configure(credentialJson, { persist: true });
+
+const config = configFromDetectors(["root_jailbreak", "frida", "hook_detection", "vpn"], {
+  expectedSigningCertSha256: "<your release certificate SHA-256>",
+});
+
+// In a component:
+const { state } = useRaspSession(config);
+state.extendedDetectors.root_jailbreak?.status; // SECURE | DETECTED | UNAVAILABLE | UNKNOWN | ERROR`}</CodeBlock>
+        </div>
+      ),
+    },
+    {
+      title: "4. Read results honestly",
+      body: (
+        <p className="text-sm text-ink-600">
+          Only DETECTED is a threat and only SECURE is a pass. UNAVAILABLE, UNKNOWN and ERROR mean the check could not
+          reach a verdict. iOS is not supported yet; there every detector reports UNAVAILABLE.
+        </p>
+      ),
+    },
+    {
+      title: "5. Check your release build",
+      body: (
+        <div className="space-y-2 text-sm text-ink-600">
+          <p>
+            If your backend URL is plain HTTP (office or test servers), add a{" "}
+            <code className="rounded bg-ink-100 px-1 py-0.5 font-mono text-xs">network_security_config</code> that allows
+            it; HTTPS needs nothing. Then run a self-test on the release build (for example in CI) to catch R8/ProGuard
+            stripping the engine.
+          </p>
+          <CodeBlock>{`import { RaspShieldCore } from "rasp-shield-react-native";
+
+const report = await RaspShieldCore.selfTest();`}</CodeBlock>
+        </div>
+      ),
+    },
+  ];
+}
+
 /**
  * Per-platform setup guide + the full 26-detector support matrix — what
  * you get, the exact `RaspLeanConfig` field to flip on, and (the
@@ -336,13 +416,16 @@ class TransferActivity : AppCompatActivity() {
  */
 export default function IntegrationGuidePage() {
   const [platforms, setPlatforms] = useState<SdkCatalogEntry[] | null>(null);
-  const [selected, setSelected] = useState<"FLUTTER" | "ANDROID_NATIVE">("FLUTTER");
+  const [selected, setSelected] = useState<"FLUTTER" | "ANDROID_NATIVE" | "REACT_NATIVE">("FLUTTER");
 
   useEffect(() => {
     apiFetch<{ platforms: SdkCatalogEntry[] }>("/v1/sdk/catalog").then((res) => setPlatforms(res.platforms));
   }, []);
 
-  const steps = useMemo(() => (selected === "FLUTTER" ? flutterSteps() : androidNativeSteps()), [selected]);
+  const steps = useMemo(
+    () => (selected === "FLUTTER" ? flutterSteps() : selected === "REACT_NATIVE" ? reactNativeSteps() : androidNativeSteps()),
+    [selected],
+  );
 
   const matrixRows = useMemo(
     () =>
@@ -380,13 +463,13 @@ export default function IntegrationGuidePage() {
       <div className="mb-6 flex flex-wrap gap-2">
         {platforms.map((p) => {
           const Logo = PLATFORM_LOGOS[p.platform] ?? AndroidLogo;
-          const isSelectable = p.available && (p.platform === "FLUTTER" || p.platform === "ANDROID_NATIVE");
+          const isSelectable = p.available && (p.platform === "FLUTTER" || p.platform === "ANDROID_NATIVE" || p.platform === "REACT_NATIVE");
           const active = selected === p.platform;
           return (
             <button
               key={p.platform}
               disabled={!isSelectable}
-              onClick={() => isSelectable && setSelected(p.platform as "FLUTTER" | "ANDROID_NATIVE")}
+              onClick={() => isSelectable && setSelected(p.platform as "FLUTTER" | "ANDROID_NATIVE" | "REACT_NATIVE")}
               className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
                 active
                   ? "border-brand-300 bg-brand-50 text-brand-800 ring-1 ring-brand-200"

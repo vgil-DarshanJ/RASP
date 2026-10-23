@@ -9,11 +9,11 @@
  * RaspLeanSession.kt`'s `RaspLeanConfig` — both verified field-by-field
  * against the real source before writing this file, not guessed).
  *
- * Only Flutter and Android Native have real field names here — iOS and
- * React Native are `available: false` in the backend's own
+ * Flutter, Android Native and React Native have real field names here (React
+ * Native uses the Kotlin names). iOS is `available: false` in the backend's
  * `SDK_CATALOG` (see `BE/src/sdk-distribution/catalog.ts`), so this page
- * shows them as "coming soon" rather than inventing instructions for an
- * SDK that doesn't exist yet.
+ * shows it as "coming soon" rather than inventing instructions for an SDK
+ * that doesn't exist yet.
  */
 
 export interface DetectorGuideEntry {
