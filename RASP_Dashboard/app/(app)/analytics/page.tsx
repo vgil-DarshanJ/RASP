@@ -16,6 +16,7 @@ import { BarChartIcon, Button, Card, DownloadIcon, MapPinIcon } from "@/componen
 import { useIsDark } from "@/lib/useIsDark";
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor } from "@/lib/alertCatalog";
 import { useAppSelection } from "@/lib/app-selection";
+import { LIVE_REFRESH_MS } from "@/lib/usePolled";
 
 const RANGES = [
   { label: "24 hours", hours: 24 },
@@ -121,7 +122,7 @@ export default function AnalyticsPage() {
     }
 
     load();
-    const interval = setInterval(load, 20_000);
+    const interval = setInterval(load, LIVE_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);

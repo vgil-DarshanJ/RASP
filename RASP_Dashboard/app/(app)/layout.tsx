@@ -44,7 +44,7 @@ const APP_SCOPED_ROUTES = [
   "/alerts-inbox",
   "/fraud-agents",
   "/fraud-intelligence",
-  "/client-risk", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings"];
+  "/client-risk", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings", "/remote-config"];
 
 function AppPickerBar() {
   const pathname = usePathname();
@@ -124,6 +124,7 @@ const NAV_GROUPS: {
     items: [
       { href: "/status", label: "System Status", icon: ActivityIcon },
       { href: "/alerting", label: "Alerting", icon: BellIcon },
+      { href: "/remote-config", label: "Remote Config", icon: LayersIcon },
       { href: "/security-settings", label: "Security Settings", icon: LockIcon },
       { href: "/guide", label: "Documentation", icon: BookOpenIcon },
       { href: "/plans", label: "Plans & Subscription", icon: BuildingIcon },

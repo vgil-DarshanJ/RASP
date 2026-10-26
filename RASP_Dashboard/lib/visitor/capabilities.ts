@@ -379,11 +379,13 @@ const DEFS: Def[] = [
       "Hang up: SECURE.",
     ],
     demo: {
-      caption: "Recorded on a real phone: with a call running in the background, Call During App Use is raised on the first check.",
-      video: { src: `${MEDIA}/call-during-app-use.mp4`, poster: `${MEDIA}/call-during-app-use.jpg` },
+      caption: "Recorded on a real phone: the feature is switched on while a call is running, and Call During App Use shows THREAT DETECTED with the call state as evidence.",
+      video: { src: `${MEDIA}/call-during-app-call.mp4`, poster: `${MEDIA}/call-during-app-call.jpg` },
       chapters: [
         { at: 0, label: "Open Call During App Use" },
-        { at: 4, label: "Call in progress → THREAT DETECTED" },
+        { at: 3, label: "Feature is off: Not running" },
+        { at: 6, label: "Call in progress → THREAT DETECTED" },
+        { at: 9, label: "Evidence: call_state OFFHOOK, app in foreground" },
       ],
     },
   },
@@ -511,6 +513,15 @@ const DEFS: Def[] = [
       "Real location: SECURE.",
       "Developer options → Select mock location app, start a fake location: DETECTED.",
     ],
+    demo: {
+      caption:
+        "Recorded on a real phone with location sharing on: on the real GPS the feature reports no threat, and the phone's shared location shows up on the console's map.",
+      video: { src: `${MEDIA}/mock-location.mp4`, poster: `${MEDIA}/mock-location.jpg` },
+      chapters: [
+        { at: 0, label: "Feature on, real GPS → No threat found" },
+        { at: 3, label: "Console map: the phone's shared location" },
+      ],
+    },
   },
   {
     id: "time_spoofing",
@@ -567,6 +578,18 @@ const DEFS: Def[] = [
     module: "ais",
     summary: "Reports when the app was not installed from a trusted app store.",
     howToShow: ["Enable the feature.", "Installed from an APK file or a computer: DETECTED.", "The same app installed from the store: SECURE."],
+    demo: {
+      caption:
+        "Recorded on a real phone with the trial build installed from a computer, not a store: THREAT DETECTED, and again on the first check after it is re-enabled.",
+      video: { src: `${MEDIA}/install-source.mp4`, poster: `${MEDIA}/install-source.jpg` },
+      chapters: [
+        { at: 0, label: "Installed from a computer → THREAT DETECTED" },
+        { at: 4, label: "Feature off — not running" },
+        { at: 5, label: "Enabled again → detected on the first check" },
+        { at: 12, label: "How to show it working" },
+        { at: 13, label: "Detection log" },
+      ],
+    },
   },
   {
     id: "task_hijack",
@@ -605,6 +628,17 @@ const DEFS: Def[] = [
     module: "nts",
     summary: "Reports when traffic goes through a VPN.",
     howToShow: ["Enable the feature.", "Connect any VPN app: DETECTED.", "Disconnect it: SECURE."],
+    demo: {
+      caption: "Recorded on a real phone with a VPN app connected: the VPN feature reports THREAT DETECTED, and again as soon as it is re-enabled.",
+      video: { src: `${MEDIA}/vpn-detection.mp4`, poster: `${MEDIA}/vpn-detection.jpg` },
+      chapters: [
+        { at: 0, label: "Feature on, VPN connected → THREAT DETECTED" },
+        { at: 4, label: "Detection log" },
+        { at: 6, label: "Notification shade: VPN app connected" },
+        { at: 12, label: "Feature off — not running" },
+        { at: 16, label: "Enabled again → detected on the first check" },
+      ],
+    },
   },
   {
     id: "high_risk_ip",
@@ -634,6 +668,10 @@ export const FEATURED_DEMO_IDS = [
   "screen_sharing_risk",
   "external_display",
   "sim_change",
+  "vishing_call",
+  "vpn",
+  "mock_location",
+  "untrusted_install_source",
 ] as const;
 
 export function moduleById(id: ModuleId): CapabilityModule {

@@ -110,7 +110,7 @@ export function DemoVideo({
           onTimeUpdate={onTime}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
-          className="aspect-[9/16] w-full object-cover"
+          className="aspect-[9/16] w-full object-contain"
           aria-label={caption ?? "Product demo recording"}
         />
         <button

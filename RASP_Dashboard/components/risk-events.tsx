@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
 import { Badge, Card } from "@/components/ui";
 import { catalogFor } from "@/lib/alertCatalog";
+import { LIVE_REFRESH_MS } from "@/lib/usePolled";
 
 /** One session / transaction risk event as the dashboard API returns it:
  *  hashes already shortened to 12 characters, no coordinates. */
@@ -26,7 +27,7 @@ export interface RiskEventRow {
   rules: { rule: string; severity: string; explanation: string }[];
 }
 
-const POLL_MS = 10_000;
+const POLL_MS = LIVE_REFRESH_MS;
 
 function severityTone(severity: string): "red" | "amber" | "slate" {
   return severity === "high" || severity === "critical" ? "red" : severity === "medium" ? "amber" : "slate";

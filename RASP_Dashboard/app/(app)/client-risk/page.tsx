@@ -26,7 +26,7 @@ const STATES: { level: Level; state: string; action: string; tone: string; bar: 
 
 export default function ClientRiskPage() {
   const { selectedAppId, selectedApp } = useAppSelection();
-  const data = usePolled<{ devices: Device[] }>(selectedAppId && `/v1/dashboard/applications/${selectedAppId}/devices`, 20_000);
+  const data = usePolled<{ devices: Device[] }>(selectedAppId && `/v1/dashboard/applications/${selectedAppId}/devices`);
   const [band, setBand] = useState<Level | null>(null);
   const [open, setOpen] = useState<Device | null>(null);
 

@@ -17,6 +17,7 @@ import {
 import { catalogFor } from "@/lib/alertCatalog";
 import { getStoredOrganization } from "@/lib/auth";
 import { apiFetch } from "@/lib/api-client";
+import { LIVE_REFRESH_MS } from "@/lib/usePolled";
 import {
   ActivityIcon,
   AlertTriangleIcon,
@@ -97,7 +98,7 @@ export default function DashboardPage() {
     }
 
     load();
-    const interval = setInterval(load, 15_000); // near-real-time polling
+    const interval = setInterval(load, LIVE_REFRESH_MS); // near-real-time polling
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -168,7 +169,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl font-semibold text-ink-900">Security dashboard</h1>
         <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-500">
           <StatusDot tone="green" pulse />
-          Live · updates every 15s · {selectedApp?.name}
+          Live · updates every {LIVE_REFRESH_MS / 1000}s · {selectedApp?.name}
         </p>
       </div>
 

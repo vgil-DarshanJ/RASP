@@ -15,6 +15,7 @@ import {
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor } from "@/lib/alertCatalog";
 import { useAppSelection } from "@/lib/app-selection";
+import { LIVE_REFRESH_MS } from "@/lib/usePolled";
 import { RiskEventsCard } from "@/components/risk-events";
 
 /** Live feed of real `DETECTED` events — `GET .../events?status=DETECTED`,
@@ -40,7 +41,7 @@ export default function ThreatsPage() {
     }
 
     load();
-    const interval = setInterval(load, 10_000);
+    const interval = setInterval(load, LIVE_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);

@@ -337,7 +337,8 @@ function reactNativeSteps(): { title: string; body: React.ReactNode }[] {
             local dependency. React Native autolinks it; the detection engine comes from JitPack, which the plugin adds to
             Gradle for you.
           </p>
-          <CodeBlock>{`npm install ../rasp-shield-react-native/react_native/rasp_shield_react_native
+          <CodeBlock>{`npm install --install-links ../rasp-shield-react-native/react_native/rasp_shield_react_native
+# --install-links copies the plugin into node_modules (a plain link breaks Metro and TypeScript)
 # then rebuild the Android app`}</CodeBlock>
         </div>
       ),

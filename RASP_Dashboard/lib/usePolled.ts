@@ -8,7 +8,10 @@ import { apiFetch } from "@/lib/api-client";
  * `null` path = nothing to load yet (no application selected). A failed
  * poll keeps the previous data and sets `error`.
  */
-export function usePolled<T>(path: string | null, intervalMs = 15_000) {
+/** How often the live pages (dashboard, alerts, analytics, risk) reload. */
+export const LIVE_REFRESH_MS = 10_000;
+
+export function usePolled<T>(path: string | null, intervalMs = LIVE_REFRESH_MS) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState(false);
 
