@@ -35,6 +35,7 @@ import { authRouter } from "../src/auth/routes";
 import { credentialsRouter } from "../src/credentials/routes";
 import { dashboardRouter } from "../src/dashboard/routes";
 import { devicesRouter } from "../src/devices/routes";
+import { integrityRouter } from "../src/integrity/routes";
 import { ingestionRouter } from "../src/ingestion/routes";
 import { ipRiskRouter } from "../src/ipRisk/routes";
 import { riskRouter } from "../src/risk/routes";
@@ -523,6 +524,12 @@ test("SDK endpoints: signature and validation errors carry no secret", async () 
   await call("POST /v1/devices/challenge", "/v1/devices/challenge", 401, { as: "none", rawBody: "{}", headers: hmacHeaders("rasp_live_cred1", null, "{}") });
   const challenge = await call("POST /v1/devices/challenge", "/v1/devices/challenge", 200, { as: "none", rawBody: "{}", headers: hmacHeaders("rasp_live_cred1", SECRET1, "{}") });
   assert.equal(typeof challenge.body.challenge, "string");
+  for (const route of ["challenge", "verify"]) {
+    const body = JSON.stringify({ route });
+    await call(`POST /v1/integrity/${route}`, `/v1/integrity/${route}`, 401, { as: "none", rawBody: body, headers: hmacHeaders("rasp_live_cred1", null, body) });
+    // Not configured in tests (no service account): refused before Google is ever called.
+    await call(`POST /v1/integrity/${route}`, `/v1/integrity/${route}`, 503, { as: "none", rawBody: body, headers: hmacHeaders("rasp_live_cred1", SECRET1, body) });
+  }
   await call("GET /v1/ip-risk", "/v1/ip-risk", 401, { as: "none", headers: hmacHeaders("rasp_live_cred1", null, "") });
   await call("GET /v1/reputation/list", "/v1/reputation/list", 401, { as: "none" });
   await call("GET /v1/reputation/list", "/v1/reputation/list", 404, { as: "none", headers: { "X-Api-Key": "rasp_live_cred1" } });
@@ -578,7 +585,7 @@ test("an unhandled error answers a bare 500 and its log has every secret value r
 test("every route of every router was scanned above", () => {
   const mounted: [string, Router][] = [
     ["/v1/auth", authRouter], ["/v1/apps", appsRouter], ["/v1/credentials", credentialsRouter],
-    ["/v1/sdk", sdkDistributionRouter], ["/v1/events", ingestionRouter], ["/v1/devices", devicesRouter],
+    ["/v1/sdk", sdkDistributionRouter], ["/v1/events", ingestionRouter], ["/v1/devices", devicesRouter], ["/v1/integrity", integrityRouter],
     ["/v1/dashboard", dashboardRouter], ["/v1/webhooks", webhooksRouter], ["/v1/ip-risk", ipRiskRouter],
     ["/v1/risk", riskRouter], ["/v1/reputation", reputationRouter], ["/v1/privacy", privacyRouter],
     ["/v1/config", deviceConfigRouter], ["/v1/apps/:id/remote-config", remoteConfigAdminRouter],

@@ -60,6 +60,8 @@ services:
       REPUTATION_LIST_PATH: /reputation/list.json
     volumes:
       - ./reputation:/reputation:ro
+      # Play Integrity service account key (deploy/secrets/play-integrity.json, not in git).
+      - ./secrets:/secrets:ro
 
   proxy:
     build:

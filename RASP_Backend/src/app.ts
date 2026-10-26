@@ -15,6 +15,7 @@ import { credentialsRouter } from "./credentials/routes";
 import { sdkDistributionRouter } from "./sdk-distribution/routes";
 import { ingestionRouter } from "./ingestion/routes";
 import { devicesRouter } from "./devices/routes";
+import { integrityRouter } from "./integrity/routes";
 import { dashboardRouter } from "./dashboard/routes";
 import { webhooksRouter } from "./webhooks/routes";
 import { ipRiskRouter } from "./ipRisk/routes";
@@ -66,6 +67,7 @@ export function createApp() {
   app.use("/v1/sdk", sdkDistributionRouter);
   app.use("/v1/events", ingestionRouter);
   app.use("/v1/devices", devicesRouter);
+  app.use("/v1/integrity", integrityRouter);
   app.use("/v1/dashboard", dashboardRouter);
   app.use("/v1/webhooks", webhooksRouter);
   app.use("/v1/ip-risk", ipRiskRouter);

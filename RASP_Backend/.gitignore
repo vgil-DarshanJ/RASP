@@ -12,6 +12,11 @@ dist/
 deploy/production.env
 deploy/backups/
 deploy/reputation/
+deploy/secrets/
+
+# Google service account keys (Play Integrity) must never be committed.
+*service-account*.json
+play-integrity*.json
 
 # scripts/office-server.sh: logs and pids on the office server.
 .office-server/

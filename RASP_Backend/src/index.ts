@@ -21,6 +21,11 @@ const port = Number(process.env.PORT) || 4444;
 const server = app.listen(port, host, () => {
   console.log(`[rasp-shield-backend] listening on ${host}:${port}`);
 });
+// Node closes an idle keep-alive socket after 5 s; phones reuse pooled
+// sockets for longer, and a request sent on one the server just closed gets
+// no answer (high_risk_ip showed "no answer from the backend").
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 
 // Daily deletion of data past its retention period, when one is configured.
 startRetentionSchedule();
