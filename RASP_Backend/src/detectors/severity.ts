@@ -163,3 +163,21 @@ export function contributingDetectors(
     }))
     .sort((a, b) => b.weight - a.weight);
 }
+
+/** One event's level in the device log view and the CSV export: a
+ *  DETECTED event takes its detector's severity; every other status says
+ *  what the check itself did (passed, could not run, failed). */
+export type LogLevel = DetectorSeverity | "error" | "unavailable" | "secure";
+
+export function logLevelOf(detectorId: string, status: string): LogLevel {
+  switch (status) {
+    case "DETECTED":
+      return severityOf(detectorId);
+    case "SECURE":
+      return "secure";
+    case "ERROR":
+      return "error";
+    default:
+      return "unavailable";
+  }
+}

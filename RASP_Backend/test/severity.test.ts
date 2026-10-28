@@ -25,3 +25,14 @@ test("new detector ids have an explicit severity (not the 'low' fallback)", () =
   assert.equal(weightOf("mock_location"), 25);
   assert.equal(weightOf("time_spoofing"), 12);
 });
+
+test("log level: DETECTED takes the detector's severity, other statuses their own level", async () => {
+  const { logLevelOf } = await import("../src/detectors/severity");
+  assert.equal(logLevelOf("frida", "DETECTED"), "critical");
+  assert.equal(logLevelOf("developer_mode", "DETECTED"), "low");
+  assert.equal(logLevelOf("unknown_detector", "DETECTED"), "low");
+  assert.equal(logLevelOf("frida", "SECURE"), "secure");
+  assert.equal(logLevelOf("frida", "ERROR"), "error");
+  assert.equal(logLevelOf("frida", "UNAVAILABLE"), "unavailable");
+  assert.equal(logLevelOf("frida", "UNKNOWN"), "unavailable");
+});

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db/prisma";
 import { AuthedRequest, requireAuth } from "../middleware/auth";
 import { getDetectorCountsFromCache, getRecentEventsFromCache } from "../redis/dashboardCache";
-import { contributingDetectors, riskLevelForScore, scoreForLatestStatuses } from "../detectors/severity";
+import { contributingDetectors, logLevelOf, riskLevelForScore, scoreForLatestStatuses } from "../detectors/severity";
 import { mapPointsHandler } from "./mapPoints";
 import { deviceRiskHandler, riskEventsHandler } from "./riskEvents";
 import { userRateLimiter } from "../redis/userRateLimit";
@@ -353,6 +353,8 @@ dashboardRouter.get("/applications/:applicationId/geography", async (req: Authed
 const exportQuerySchema = z.object({
   status: z.enum(["SECURE", "DETECTED", "UNAVAILABLE", "UNKNOWN", "ERROR"]).optional(),
   detectorId: z.string().optional(),
+  /** One device's logs only (Live Threats → device logs → Download CSV). */
+  deviceId: z.string().min(1).max(200).optional(),
   hours: z.coerce.number().min(1).max(24 * 90).default(24 * 7),
 });
 
@@ -369,7 +371,7 @@ dashboardRouter.get("/applications/:applicationId/events/export", async (req: Au
 
   const parsed = exportQuerySchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: "INVALID_QUERY" });
-  const { status, detectorId, hours } = parsed.data;
+  const { status, detectorId, deviceId, hours } = parsed.data;
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
 
   const events = await prisma.securityEvent.findMany({
@@ -378,6 +380,7 @@ dashboardRouter.get("/applications/:applicationId/events/export", async (req: Au
       receivedAt: { gte: since },
       ...(status && { status }),
       ...(detectorId && { detectorId }),
+      ...(deviceId && { deviceId }),
     },
     orderBy: { receivedAt: "desc" },
     take: 20_000,
@@ -385,6 +388,7 @@ dashboardRouter.get("/applications/:applicationId/events/export", async (req: Au
 
   const columns = [
     "receivedAt",
+    "level",
     "detectorId",
     "status",
     "reason",
@@ -405,13 +409,15 @@ dashboardRouter.get("/applications/:applicationId/events/export", async (req: Au
       columns
         .map((col) => {
           if (col === "receivedAt") return csvField(e.receivedAt.toISOString());
+          if (col === "level") return csvField(logLevelOf(e.detectorId, e.status));
           return csvField((e as any)[col]);
         })
         .join(","),
     );
   }
 
-  const filename = `${app.name.replace(/[^a-z0-9]+/gi, "_")}_events_${new Date().toISOString().slice(0, 10)}.csv`;
+  const scope = deviceId ? `device_${deviceId.replace(/[^a-z0-9]+/gi, "").slice(0, 12)}` : "events";
+  const filename = `${app.name.replace(/[^a-z0-9]+/gi, "_")}_${scope}_${new Date().toISOString().slice(0, 10)}.csv`;
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(lines.join("\n"));
