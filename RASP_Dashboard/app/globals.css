@@ -354,3 +354,46 @@ select option {
   background-color: rgb(var(--surface));
   color: rgb(var(--ink-900));
 }
+
+/* Log levels (lib/logLevels.ts): one colour per level, readable in both
+   themes. `--lvl` is the solid colour (dots, bars, tints); `--lvl-fg` the
+   text colour, darker in light mode and lighter in dark mode. */
+.lvl-critical { --lvl: 239 68 68;  --lvl-fg: 185 28 28; }
+.lvl-high     { --lvl: 249 115 22; --lvl-fg: 194 65 12; }
+.lvl-medium   { --lvl: 234 179 8;  --lvl-fg: 161 98 7; }
+.lvl-low      { --lvl: 59 130 246; --lvl-fg: 29 78 216; }
+.lvl-error    { --lvl: 168 85 247; --lvl-fg: 126 34 206; }
+.lvl-unavailable { --lvl: 120 127 145; --lvl-fg: 82 88 104; }
+.lvl-secure   { --lvl: 16 185 129; --lvl-fg: 4 120 87; }
+
+:root[data-theme="dark"] .lvl-critical { --lvl-fg: 252 129 129; }
+:root[data-theme="dark"] .lvl-high { --lvl-fg: 253 160 98; }
+:root[data-theme="dark"] .lvl-medium { --lvl-fg: 250 204 21; }
+:root[data-theme="dark"] .lvl-low { --lvl-fg: 125 170 255; }
+:root[data-theme="dark"] .lvl-error { --lvl-fg: 200 150 255; }
+:root[data-theme="dark"] .lvl-unavailable { --lvl-fg: 160 166 180; }
+:root[data-theme="dark"] .lvl-secure { --lvl-fg: 74 222 166; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lvl-critical { --lvl-fg: 252 129 129; }
+  :root:not([data-theme="light"]) .lvl-high { --lvl-fg: 253 160 98; }
+  :root:not([data-theme="light"]) .lvl-medium { --lvl-fg: 250 204 21; }
+  :root:not([data-theme="light"]) .lvl-low { --lvl-fg: 125 170 255; }
+  :root:not([data-theme="light"]) .lvl-error { --lvl-fg: 200 150 255; }
+  :root:not([data-theme="light"]) .lvl-unavailable { --lvl-fg: 160 166 180; }
+  :root:not([data-theme="light"]) .lvl-secure { --lvl-fg: 74 222 166; }
+}
+
+.lvl-text { color: rgb(var(--lvl-fg)); }
+.lvl-dot { background-color: rgb(var(--lvl)); }
+.lvl-pill {
+  color: rgb(var(--lvl-fg));
+  background-color: rgb(var(--lvl) / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(var(--lvl) / 0.35);
+}
+.lvl-row { box-shadow: inset 3px 0 0 rgb(var(--lvl)); }
+.lvl-row:hover { background-color: rgb(var(--lvl) / 0.06); }
+.lvl-chip-on {
+  color: rgb(var(--lvl-fg));
+  background-color: rgb(var(--lvl) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--lvl) / 0.45);
+}

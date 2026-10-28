@@ -10,6 +10,12 @@ const nextConfig = {
   // static files that the HTTPS proxy serves — every page is a client page,
   // so no Node server is needed in front of users.
   ...(process.env.NEXT_OUTPUT === "export" ? { output: "export" } : {}),
+  // Laptop testing against the office backend: DEV_API_PROXY=http://192.168.2.208:4444
+  // with NEXT_PUBLIC_API_BASE_URL=http://localhost:<port> sends /v1/* through
+  // this dev server, so the session cookie is same-site and CORS is not needed.
+  ...(process.env.DEV_API_PROXY
+    ? { rewrites: async () => [{ source: "/v1/:path*", destination: `${process.env.DEV_API_PROXY}/v1/:path*` }] }
+    : {}),
 };
 
 module.exports = nextConfig;

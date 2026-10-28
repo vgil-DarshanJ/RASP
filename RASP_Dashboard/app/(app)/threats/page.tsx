@@ -2,32 +2,52 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
-import {
-  AlertTriangleIcon,
-  Badge,
-  Card,
-  CategoryChip,
-  SmartphoneIcon,
-  StatCard,
-  StatusDot,
-  statusTone,
-} from "@/components/ui";
+import { AlertTriangleIcon, Card, CategoryChip, SmartphoneIcon, StatCard, StatusDot } from "@/components/ui";
 import { EventDetailDrawer, type SecurityEvent } from "@/components/event-drawer";
+import { DevicePicker, deviceName, type PickerDevice } from "@/components/device-picker";
+import { DeviceLogs } from "@/components/device-logs";
 import { ALL_CATEGORIES, CATEGORY_COLORS, catalogFor } from "@/lib/alertCatalog";
+import { levelMeta, logLevelOf } from "@/lib/logLevels";
 import { useAppSelection } from "@/lib/app-selection";
-import { LIVE_REFRESH_MS } from "@/lib/usePolled";
+import { LIVE_REFRESH_MS, timeAgo, usePolled } from "@/lib/usePolled";
 import { RiskEventsCard } from "@/components/risk-events";
 
 /** Live feed of real `DETECTED` events — `GET .../events?status=DETECTED`,
  *  the same endpoint the Dashboard's filter dropdown already uses, just
  *  pinned to threats and polled tighter (10s) since this is meant to be
  *  watched, not just checked in on. No separate "alerting" system exists
- *  yet — this is the honest live view of what the SDK actually reported. */
+ *  yet — this is the honest live view of what the SDK actually reported.
+ *
+ *  "Select device" (or a device in the table) switches the card to that
+ *  device's full log, coloured by level, with a CSV download — see
+ *  components/device-logs.tsx. The open device is kept in `?device=` so
+ *  the view survives a reload and can be shared. */
 export default function ThreatsPage() {
   const { apps, selectedAppId, loading: appsLoading } = useAppSelection();
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+
+  const { data: deviceData } = usePolled<{ devices: PickerDevice[] }>(
+    selectedAppId && `/v1/dashboard/applications/${selectedAppId}/devices`,
+    30_000,
+  );
+  const devices = deviceData?.devices ?? null;
+  const openDevice = devices?.find((d) => d.deviceId === deviceId) ?? null;
+
+  // ?device=<id> ↔ the open device.
+  useEffect(() => {
+    setDeviceId(new URLSearchParams(window.location.search).get("device"));
+  }, []);
+  function selectDevice(id: string | null) {
+    setDeviceId(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("device", id);
+    else url.searchParams.delete("device");
+    window.history.replaceState(null, "", url);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   useEffect(() => {
     if (!selectedAppId) return;
@@ -90,91 +110,147 @@ export default function ThreatsPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-ink-900">Live Threats</h1>
-        <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-500">
-          <StatusDot tone={stats.total > 0 ? "red" : "green"} pulse />
-          {stats.total > 0 ? `${stats.total} active threat findings` : "No active threats"} ·{" "}
-          {selectedApp?.name}
-        </p>
-      </div>
-
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Threats · this view" value={stats.total} icon={<AlertTriangleIcon size={18} />} tone={stats.total > 0 ? "red" : "slate"} />
-        <StatCard label="Devices affected" value={stats.uniqueDevices} icon={<SmartphoneIcon size={18} />} tone="slate" />
-        <StatCard label="Most common threat" value={<span className="font-mono text-base">{stats.topDetector}</span>} icon={<AlertTriangleIcon size={18} />} tone="slate" />
-      </div>
-
-      {selectedAppId && <RiskEventsCard applicationId={selectedAppId} />}
-
-      <Card className="overflow-hidden">
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-5 py-3">
-          <CategoryChip
-            label="All"
-            colors={{ bg: "bg-brand-50", text: "text-brand-700", dot: "bg-brand-500" }}
-            count={events.length}
-            active={categoryFilter === null}
-            onClick={() => setCategoryFilter(null)}
-          />
-          {ALL_CATEGORIES.filter((c) => categoryCounts.has(c)).map((cat) => (
-            <CategoryChip
-              key={cat}
-              label={cat}
-              colors={CATEGORY_COLORS[cat]}
-              count={categoryCounts.get(cat)}
-              active={categoryFilter === cat}
-              onClick={() => setCategoryFilter(cat)}
-            />
-          ))}
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink-900">Live Threats</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-ink-500">
+            <StatusDot tone={stats.total > 0 ? "red" : "green"} pulse />
+            {stats.total > 0 ? `${stats.total} active threat findings` : "No active threats"} · {selectedApp?.name}
+          </p>
         </div>
-        {filteredEvents.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-14 text-center">
-            <AlertTriangleIcon size={22} className="text-ink-300" />
-            <p className="text-sm text-ink-400">
-              {events.length === 0 ? "No threats detected for this application right now." : "No threats match this category."}
-            </p>
-          </div>
+        <DevicePicker devices={devices} selectedId={deviceId} onSelect={(d) => selectDevice(d.deviceId)} />
+      </div>
+
+      {deviceId && selectedAppId ? (
+        openDevice ? (
+          <DeviceLogs
+            key={openDevice.deviceId}
+            applicationId={selectedAppId}
+            appName={selectedApp?.name ?? "app"}
+            device={openDevice}
+            onClose={() => selectDevice(null)}
+          />
+        ) : devices === null ? (
+          <div className="h-72 animate-pulse rounded-2xl bg-ink-100" />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-ink-100 text-xs uppercase tracking-wide text-ink-400">
-                  <th className="py-2.5 pl-5 pr-4 font-medium">Time</th>
-                  <th className="py-2.5 pr-4 font-medium">Alert</th>
-                  <th className="py-2.5 pr-4 font-medium">Status</th>
-                  <th className="py-2.5 pr-4 font-medium">Device</th>
-                  <th className="py-2.5 pr-5 font-medium">OS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredEvents.map((event) => {
-                  const catalog = catalogFor(event.detectorId);
-                  return (
-                    <tr
-                      key={event.id}
-                      onClick={() => setSelectedEvent(event)}
-                      className="cursor-pointer border-b border-red-50 bg-red-50/30 transition hover:bg-red-50/70"
-                    >
-                      <td className="py-2.5 pl-5 pr-4 text-ink-500">{new Date(event.receivedAt).toLocaleString()}</td>
-                      <td className="py-2.5 pr-4">
-                        <div className="font-medium text-ink-900">{catalog.title}</div>
-                        <div className="font-mono text-[11px] text-ink-400">{event.detectorId}</div>
-                      </td>
-                      <td className="py-2.5 pr-4">
-                        <Badge tone={statusTone(event.status)}>{event.status}</Badge>
-                      </td>
-                      <td className="py-2.5 pr-4 text-ink-600">{event.deviceModel ?? "—"}</td>
-                      <td className="py-2.5 pr-5 text-ink-600">
-                        {event.osPlatform ? `${event.osPlatform} ${event.osVersion ?? ""}` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <Card className="p-10 text-center">
+            <p className="text-sm text-ink-500">This device has no logs in {selectedApp?.name}.</p>
+            <button type="button" onClick={() => selectDevice(null)} className="mt-3 text-sm font-medium text-brand-600 hover:underline">
+              ← Back to all devices
+            </button>
+          </Card>
+        )
+      ) : (
+        <>
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <StatCard label="Threats · this view" value={stats.total} icon={<AlertTriangleIcon size={18} />} tone={stats.total > 0 ? "red" : "slate"} />
+            <StatCard label="Devices affected" value={stats.uniqueDevices} icon={<SmartphoneIcon size={18} />} tone="slate" />
+            <StatCard label="Most common threat" value={<span className="text-base">{stats.topDetector}</span>} icon={<AlertTriangleIcon size={18} />} tone="slate" />
           </div>
-        )}
-      </Card>
+
+          {selectedAppId && <RiskEventsCard applicationId={selectedAppId} />}
+
+          <Card className="overflow-hidden">
+            <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 px-5 py-3">
+              <CategoryChip
+                label="All"
+                colors={{ bg: "bg-brand-50", text: "text-brand-700", dot: "bg-brand-500" }}
+                count={events.length}
+                active={categoryFilter === null}
+                onClick={() => setCategoryFilter(null)}
+              />
+              {ALL_CATEGORIES.filter((c) => categoryCounts.has(c)).map((cat) => (
+                <CategoryChip
+                  key={cat}
+                  label={cat}
+                  colors={CATEGORY_COLORS[cat]}
+                  count={categoryCounts.get(cat)}
+                  active={categoryFilter === cat}
+                  onClick={() => setCategoryFilter(cat)}
+                />
+              ))}
+            </div>
+            {filteredEvents.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-14 text-center">
+                <AlertTriangleIcon size={22} className="text-ink-300" />
+                <p className="text-sm text-ink-400">
+                  {events.length === 0 ? "No threats detected for this application right now." : "No threats match this category."}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-ink-100 text-[11px] uppercase tracking-wide text-ink-400">
+                      <th className="py-2.5 pl-5 pr-4 font-medium">Time</th>
+                      <th className="py-2.5 pr-4 font-medium">Level</th>
+                      <th className="py-2.5 pr-4 font-medium">Alert</th>
+                      <th className="py-2.5 pr-4 font-medium">Device</th>
+                      <th className="py-2.5 pr-5 font-medium">OS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEvents.map((event) => {
+                      const catalog = catalogFor(event.detectorId);
+                      const level = logLevelOf(event.detectorId, event.status);
+                      const device = devices?.find((d) => d.deviceId === event.deviceId);
+                      return (
+                        <tr
+                          key={event.id}
+                          onClick={() => setSelectedEvent(event)}
+                          className={`lvl-${level} lvl-row cursor-pointer border-b border-ink-100/70 transition`}
+                        >
+                          <td className="whitespace-nowrap py-2.5 pl-5 pr-4" title={new Date(event.receivedAt).toLocaleString()}>
+                            <div className="font-mono text-xs tabular-nums text-ink-700">
+                              {new Date(event.receivedAt).toLocaleTimeString([], { hour12: false })}
+                            </div>
+                            <div className="text-[11px] text-ink-400">{timeAgo(event.receivedAt)}</div>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <span className="lvl-pill inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+                              <span className="lvl-dot h-1.5 w-1.5 rounded-full" />
+                              {levelMeta(level).label}
+                            </span>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <div className="font-medium text-ink-900">{catalog.title}</div>
+                            <div className="font-mono text-[11px] text-ink-500">{event.detectorId}</div>
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            {event.deviceId ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  selectDevice(event.deviceId);
+                                }}
+                                className="group text-left"
+                                title="Open this device's logs"
+                              >
+                                <span className="block text-ink-800 group-hover:text-brand-600">
+                                  {device ? deviceName(device) : event.deviceModel ?? "Unknown"}
+                                </span>
+                                <span className="block font-mono text-[10px] text-ink-400 group-hover:text-brand-500">
+                                  {event.deviceId.slice(0, 8)} · view logs →
+                                </span>
+                              </button>
+                            ) : (
+                              <span className="text-ink-400">—</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 pr-5 text-ink-600">
+                            {event.osPlatform ? `${event.osPlatform} ${event.osVersion ?? ""}` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
 
       {selectedEvent && <EventDetailDrawer event={selectedEvent} onClose={() => setSelectedEvent(null)} />}
     </div>
