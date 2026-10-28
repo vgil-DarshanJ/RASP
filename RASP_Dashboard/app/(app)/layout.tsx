@@ -10,7 +10,6 @@ import { AppSelectionProvider, useAppSelection } from "@/lib/app-selection";
 import { useIsDark } from "@/lib/useIsDark";
 import {
   ActivityIcon,
-  AlertCircleIcon,
   AlertTriangleIcon,
   BarChartIcon,
   BellIcon,
@@ -42,9 +41,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const APP_SCOPED_ROUTES = [
   "/dashboard",
   "/alerts-inbox",
-  "/fraud-agents",
-  "/fraud-intelligence",
-  "/client-risk", "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings", "/remote-config"];
+  "/analytics", "/devices", "/threats", "/activations", "/alerting", "/security-settings", "/remote-config"];
 
 function AppPickerBar() {
   const pathname = usePathname();
@@ -96,9 +93,6 @@ const NAV_GROUPS: {
       { href: "/apps", label: "Applications", icon: LayersIcon },
       { href: "/controls", label: "Mobile App Controls", icon: CheckCircleIcon },
       { href: "/alerts-inbox", label: "Alerts Inbox", icon: MailIcon, badge: "Pro" },
-      { href: "/fraud-agents", label: "Fraud Prevention Agents", icon: ShieldIcon, badge: "Pro" },
-      { href: "/fraud-intelligence", label: "Fraud Intelligence", icon: SearchIcon, badge: "Pro" },
-      { href: "/client-risk", label: "Client Risk State", icon: AlertCircleIcon, badge: "Pro" },
     ],
   },
   {

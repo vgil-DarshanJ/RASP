@@ -24,7 +24,7 @@ export default function PlansPage() {
       <section className="mx-auto max-w-6xl px-4 pb-12 pt-14 text-center sm:px-6 lg:px-10">
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-300/80">Plans</div>
         <h1 className="mx-auto mt-2 max-w-3xl text-3xl font-bold sm:text-5xl">
-          From a demo on one phone to <span className="text-brand-300">fraud intelligence at bank scale</span>
+          From a demo on one phone to <span className="text-brand-300">security operations at bank scale</span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-white/55">
           Every plan uses the same engine and the same console. Plans differ in which modules are switched on,

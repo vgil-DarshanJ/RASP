@@ -138,8 +138,8 @@ export const PILLARS: Pillar[] = [
         title: "Online & Application Logic (Backend Controls)",
         controls: [
           { id: "s-be-1", topic: "Verify device signals on the server", consider: "Signed events, replay protection.", why: "A client can lie; signed evidence cannot be forged cheaply.", how: "Accept only signed, non-replayed events from registered device keys.", masvs: "MASVS-RESILIENCE-1", priority: "P0", frameworks: "MASVS", coveredBy: ["console:signed-telemetry"] },
-          { id: "s-be-2", topic: "Risk-based step-up", consider: "Which actions, which signals.", why: "Blocking everything hurts users; risk lets you be precise.", how: "Use the device risk score to require step-up on risky sessions.", masvs: "MASVS-AUTH-3", priority: "P1", frameworks: "RBI guidance", coveredBy: ["console:client-risk"] },
-          { id: "s-be-3", topic: "Fraud rules on sessions and payments", consider: "Thresholds per product.", why: "Velocity and new-device patterns precede account takeover.", how: "Run rules for device change, travel, velocity, new beneficiary.", masvs: "—", priority: "P1", frameworks: "RBI fraud framework", coveredBy: ["console:fraud-agents"] },
+          { id: "s-be-2", topic: "Risk-based step-up", consider: "Which actions, which signals.", why: "Blocking everything hurts users; risk lets you be precise.", how: "Use the device risk score to require step-up on risky sessions.", masvs: "MASVS-AUTH-3", priority: "P1", frameworks: "RBI guidance" },
+          { id: "s-be-3", topic: "Fraud rules on sessions and payments", consider: "Thresholds per product.", why: "Velocity and new-device patterns precede account takeover.", how: "Run rules for device change, travel, velocity, new beneficiary.", masvs: "—", priority: "P1", frameworks: "RBI fraud framework" },
         ],
       },
       {
@@ -158,8 +158,6 @@ export const ALL_CONTROLS = PILLARS.flatMap((p) => p.sections.flatMap((s) => s.c
 
 export const CONSOLE_FEATURES: Record<string, { label: string; href: string }> = {
   "console:signed-telemetry": { label: "Signed telemetry", href: "/security-settings" },
-  "console:client-risk": { label: "Client Risk State", href: "/client-risk" },
-  "console:fraud-agents": { label: "Fraud Prevention Agents", href: "/fraud-agents" },
   "console:webhooks": { label: "Alerting webhooks", href: "/alerting" },
   "console:audit-log": { label: "Audit Logs", href: "/audit-logs" },
 };

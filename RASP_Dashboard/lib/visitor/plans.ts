@@ -43,7 +43,7 @@ export const PLANS: Plan[] = [
     cta: { label: "Talk to us", href: "/register" },
     highlights: [
       "All 43 on-device detectors",
-      "Alerts Inbox and Client Risk State",
+      "Alerts Inbox and device monitoring",
       "Webhook alerting",
     ],
   },
@@ -57,7 +57,7 @@ export const PLANS: Plan[] = [
     featured: true,
     highlights: [
       "Everything in Add+",
-      "Fraud Prevention Agents and Fraud Intelligence",
+      "Expanded security operations",
       "Device Map with opt-in location",
     ],
   },
@@ -167,14 +167,7 @@ export const MATRIX: MatrixGroup[] = [
       { label: "Devices and per-device timeline", cells: all() },
       { label: "Mobile App Controls self-assessment", cells: all() },
       { label: "Alerts Inbox", cells: { demo: false, addplus: true, startup: true, largecap: true } },
-      { label: "Client Risk State", cells: { demo: false, addplus: true, startup: true, largecap: true } },
       { label: "Webhook alerting", cells: { demo: false, addplus: true, startup: true, largecap: true } },
-      {
-        label: "Fraud Prevention Agents",
-        hint: "Server-side rules over session and transaction events",
-        cells: { demo: false, addplus: false, startup: "Default thresholds", largecap: "Tunable per app" },
-      },
-      { label: "Fraud Intelligence", cells: { demo: false, addplus: false, startup: true, largecap: true } },
       { label: "Device Map (opt-in location)", cells: { demo: false, addplus: false, startup: true, largecap: true } },
       { label: "Signed remote configuration", cells: { demo: false, addplus: false, startup: false, largecap: true } },
       { label: "Hardware attestation policy", cells: { demo: false, addplus: false, startup: false, largecap: true } },

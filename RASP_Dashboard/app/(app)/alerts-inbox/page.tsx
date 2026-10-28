@@ -272,11 +272,11 @@ function Detail({ item }: { item: InboxItem }) {
         <Fact label="IP country" value={r.ipCountry ?? "unknown"} />
       </dl>
       <div className="mt-6 flex flex-wrap gap-2">
-        <Link href="/fraud-intelligence" className="rounded-lg bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700">
-          Open Fraud Intelligence
+        <Link href="/threats" className="rounded-lg bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700">
+          View Live Threats
         </Link>
-        <Link href="/fraud-agents" className="rounded-lg border border-ink-200 px-3 py-2 text-xs font-medium text-ink-700 hover:bg-ink-50">
-          Tune the agent
+        <Link href="/security-settings" className="rounded-lg border border-ink-200 px-3 py-2 text-xs font-medium text-ink-700 hover:bg-ink-50">
+          Review security settings
         </Link>
       </div>
     </div>

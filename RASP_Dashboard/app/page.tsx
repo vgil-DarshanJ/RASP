@@ -25,7 +25,7 @@ type Stage = "checking" | "loading" | "portal" | "reveal" | "hero";
 const STATS = [
   { value: String(CAPABILITIES.length), label: "On-device detectors" },
   { value: String(MODULES.length), label: "Protection modules" },
-  { value: "6", label: "Server-side fraud agents" },
+  { value: "6", label: "Server-side event signals" },
   { value: "ES256", label: "Signed device telemetry" },
 ];
 
@@ -213,7 +213,7 @@ export default function RootPage() {
             {/* ── Plans ────────────────────────────────────────────── */}
             <section id="plans" className="border-t border-white/[0.06] bg-white/[0.015] py-20">
               <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-10">
-                <SectionHead eyebrow="Plans" title="Start with the demo. Grow into fraud intelligence." />
+                <SectionHead eyebrow="Plans" title="Start with the demo. Grow into security operations." />
                 <PlanCards />
                 <div className="mt-8 text-center">
                   <Link href="/plans" className="text-sm font-medium text-brand-300 hover:text-brand-200">

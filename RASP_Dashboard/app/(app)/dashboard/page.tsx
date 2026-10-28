@@ -180,7 +180,7 @@ export default function DashboardPage() {
             <h2 className="text-lg font-semibold">
               {getStoredOrganization()?.name ? `${getStoredOrganization()!.name}, ` : ""}your apps are reporting in.
             </h2>
-            <p className="mt-1 text-sm text-white/60">Turn signals into decisions: triage alerts, check client risk, close control gaps.</p>
+            <p className="mt-1 text-sm text-white/60">Turn signals into decisions: triage alerts, review devices, close control gaps.</p>
             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-white/70">
               {["Screen sharing & mirroring", "USB & device-lock posture", "Remote-access scam signals"].map((t) => (
                 <span key={t} className="flex items-center gap-1.5">

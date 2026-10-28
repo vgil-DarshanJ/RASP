@@ -699,16 +699,8 @@ export function severityOf(id: string) {
   return catalogFor(id).severity;
 }
 
-/** Server-side fraud intelligence that sits on top of the on-device modules. */
+/** Server-side services that sit on top of the on-device modules. */
 export const PLATFORM_SERVICES = [
-  {
-    name: "Fraud Prevention Agents",
-    desc: "Six explainable server-side rules — new device for an account, device-change velocity, concurrent sessions, impossible travel, transaction velocity, new beneficiary — each tunable per app.",
-  },
-  {
-    name: "Client Risk State",
-    desc: "A 0–100 risk score per device from each detector's latest result, with a recommended action: allow, watch, step-up or block.",
-  },
   {
     name: "Signed telemetry",
     desc: "Every event is signed with a hardware-backed device key (ES256) and replay-checked before it reaches the console.",

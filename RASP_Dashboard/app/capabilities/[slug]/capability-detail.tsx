@@ -85,7 +85,7 @@ export function CapabilityDetail({ slug }: { slug: string }) {
                   <div className="text-sm font-semibold">What the console receives</div>
                   <p className="mt-2 text-sm leading-relaxed text-white/55">
                     A signed event with the result (SECURE, DETECTED or UNKNOWN), evidence, device and app version. It feeds
-                    Live Threats, the Alerts Inbox and the device&apos;s Client Risk State.
+                    Live Threats, the Alerts Inbox and the device&apos;s latest telemetry.
                   </p>
                 </div>
                 {cap.needs && (
