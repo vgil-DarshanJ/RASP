@@ -1,0 +1,568 @@
+// RASP Shield Platform — data model.
+// Postgres is the single source of truth. Redis (wired separately via
+// ioredis, not Prisma) is a cache/counter layer only — never authoritative.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Platform {
+  ANDROID_NATIVE
+  FLUTTER
+  IOS
+  REACT_NATIVE
+}
+
+enum CredentialStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// How device registration treats key attestation (src/devices/attestationPolicy.ts).
+/// RECORD: register every key and record the verdict (default).
+/// REQUIRE_HARDWARE: register, and accept envelopes and risk events, only from
+/// keys with a Google-verified hardware attestation for this app (package and,
+/// when set, signing certificate) whose possession was proven by signing a
+/// server challenge.
+enum AttestationPolicy {
+  RECORD
+  REQUIRE_HARDWARE
+}
+
+/// A customer's organization/bank — the top-level tenant boundary. Every
+/// alert eventually traces back to exactly one of these, which is what
+/// decides who gets notified in a future alert-routing phase.
+model Organization {
+  id           String        @id @default(cuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  users        User[]
+  applications Application[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  role         Role         @default(OWNER)
+  organization Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  createdAt    DateTime     @default(now())
+  /// Raised by POST /v1/auth/logout; a token carrying an older value is revoked.
+  tokenVersion Int          @default(0)
+  passwordResetTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+/// One-time password-reset link (POST /v1/auth/forgot-password). Only the
+/// SHA-256 of the token is stored; it expires after 30 minutes and is
+/// deleted when used or when a newer link is requested.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  requestIp String?
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+/// One integration — "our Android app," "our Flutter app" — registered
+/// under an organization. A JSON credential is issued per Application, not
+/// per Organization, so revoking one app's access never affects another.
+model Application {
+  id             String        @id @default(cuid())
+  name           String
+  platform       Platform
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String
+  createdAt      DateTime      @default(now())
+  credentials    ApiCredential[]
+  events         SecurityEvent[]
+  webhooks       WebhookConfig[]
+  devices        DeviceRegistration[]
+  /// Soft-delete/archive marker — set by `DELETE /v1/apps/:id`. Every
+  /// query that scopes to one application (dashboard, devices, threats,
+  /// credentials, webhooks — anywhere `assertOwnedApplication` runs)
+  /// additionally requires `archivedAt: null`, so an archived app's
+  /// `SecurityEvent` rows become unreachable through the normal API
+  /// surface without a single one of them being touched or deleted —
+  /// "hide everything, keep everything," the same rule `ApiCredential
+  /// .deletedAt` already established for credentials.
+  archivedAt     DateTime?
+  /// Signing certificate SHA-256 (64 hex, uppercase, no separators) the
+  /// app is expected to be signed with. Set by an OWNER/ADMIN through
+  /// PATCH /v1/apps/:id. A tamper result carrying a different
+  /// `signing_cert_sha256` raises a "tamper_signing_mismatch" alert.
+  expectedSigningCertSha256 String?
+  /// GET /v1/ip-risk policy for this app. Empty blocked list = the env
+  /// default (IP_RISK_BLOCKED_COUNTRIES); empty allowed list = no allow-list.
+  ipBlockedCountries String[] @default([])
+  ipAllowedCountries String[] @default([])
+  /// Salt the SDK uses to hash account / session / beneficiary ids:
+  /// hex(HMAC-SHA256(key = salt bytes, msg = UTF-8 id)). 64 lowercase hex
+  /// (32 random bytes). Generated at app creation, or lazily when a
+  /// credential is issued for an older app. Returned in full only in a newly
+  /// issued credential's JSON; elsewhere as a masked prefix; never in logs.
+  accountHashSalt String?
+  /// Per-application thresholds for the fraud-risk rules (src/risk/rules.ts).
+  /// null = defaults. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
+  riskRules      Json?
+  /// See enum AttestationPolicy. Changed through PATCH /v1/apps/:id (OWNER/ADMIN, audited).
+  attestationPolicy AttestationPolicy @default(RECORD)
+  /// Whether POST /v1/events still accepts legacy HMAC batches (no device
+  /// key). Applications created before 2026-10-09 keep true; new ones start
+  /// false, so they accept signed envelopes only (F-14).
+  legacyIngestionEnabled Boolean @default(false)
+  accountDeviceBindings AccountDeviceBinding[]
+  sessionEvents  SessionEvent[]
+  transactionEvents TransactionEvent[]
+  settingsAuditLogs ApplicationSettingsAuditLog[]
+  deviceLocations   DeviceLocation[]
+  deviceLocationPoints DeviceLocationPoint[]
+  remoteConfigs        RemoteConfig[]
+  remoteConfigAudits   RemoteConfigAudit[]
+
+  @@index([organizationId])
+  @@map("applications")
+}
+
+/// The credential handed out as the downloadable JSON file.
+///
+/// `apiSecretEncrypted` stores the secret under AES-256-GCM (see
+/// `src/crypto/secretBox.ts`) — deliberately NOT a one-way hash. The
+/// ingestion endpoint verifies an HMAC-SHA256 signature computed with
+/// this secret on every request (see `middleware/apiKey.ts`), which
+/// requires the server to recover the raw secret at verify time; a
+/// bcrypt/argon2 hash can only ever answer "does this match," never
+/// reproduce the value needed to *compute* a signature. The plaintext
+/// secret itself is still shown to the customer exactly once, at
+/// creation, and this backend never logs or displays it again after
+/// that — only its encrypted-at-rest form is ever persisted.
+model ApiCredential {
+  id                 String            @id @default(cuid())
+  application        Application       @relation(fields: [applicationId], references: [id])
+  applicationId      String
+  apiKey             String            @unique
+  apiSecretEncrypted String
+  status             CredentialStatus  @default(ACTIVE)
+  createdAt          DateTime          @default(now())
+  rotatedAt          DateTime?
+  revokedAt          DateTime?
+  /// Soft-delete marker — set by `DELETE /v1/credentials/.../:id`, only
+  /// ever on an already-REVOKED credential. The row (and every
+  /// `CredentialAuditLog` entry pointing at it) is kept forever; this
+  /// only hides it from `GET /v1/credentials`' default listing. A true
+  /// hard delete was deliberately rejected here: it would either cascade
+  /// away this credential's own audit history or fail on the
+  /// `CredentialAuditLog` foreign key, both of which contradict the
+  /// "the audit trail is immutable" rule the rest of this schema follows.
+  deletedAt          DateTime?
+  auditLogs          CredentialAuditLog[]
+
+  @@index([applicationId])
+  @@map("api_credentials")
+}
+
+enum CredentialAuditAction {
+  ISSUED
+  REVOKED
+  REACTIVATED
+  DELETED
+  REVEALED
+}
+
+/// Who issued/revoked which credential, when, from where — the audit
+/// trail for the credential lifecycle itself (distinct from
+/// `SecurityEvent`, which audits what the SDK observed on a device).
+/// Immutable by convention: rows are only ever inserted, never updated
+/// or deleted, by this codebase.
+model CredentialAuditLog {
+  id                String                @id @default(cuid())
+  credential        ApiCredential         @relation(fields: [credentialId], references: [id])
+  credentialId      String
+  action            CredentialAuditAction
+  performedByUserId String
+  performedAt       DateTime              @default(now())
+  ipAddress         String?
+
+  @@index([credentialId])
+  @@map("credential_audit_logs")
+}
+
+/// One audit-trail row — a single detector result the SDK shipped in.
+/// `receivedAt` (server clock, set by the ingestion handler) is the
+/// authoritative timestamp; `clientObservedAt` is advisory only — a
+/// compromised device can lie about its own clock, same principle already
+/// documented throughout the SDK's own guides.
+model SecurityEvent {
+  id               String       @id @default(cuid())
+  application      Application  @relation(fields: [applicationId], references: [id])
+  applicationId    String
+
+  detectorId       String
+  status           String       // SECURE | DETECTED | UNAVAILABLE | UNKNOWN | ERROR
+  evidence         Json?
+  reason           String?
+
+  // Device/app identity — the "who and what" of the audit trail.
+  deviceId         String?
+  deviceModel      String?
+  manufacturer     String?
+  osPlatform       String?      // android | ios
+  osVersion        String?
+  appVersion       String?
+  sdkVersion       String?
+
+  clientObservedAt DateTime?
+  receivedAt       DateTime     @default(now())
+  ipAddress        String?
+
+  /// Set when the event arrived inside a signed evidence envelope.
+  envelope         EvidenceEnvelope? @relation(fields: [envelopeId], references: [id])
+  envelopeId       String?
+
+  /// Location, stored ONLY when the result carried `location_opt_in: true`
+  /// (the user opted in to sharing it). Without opt-in these stay null and
+  /// the coordinates are stripped from `evidence` as well.
+  latitude           Float?
+  longitude          Float?
+  locationAccuracyM  Float?
+  locationCapturedAt DateTime?
+  locationOptIn      Boolean @default(false)
+
+  @@index([applicationId, receivedAt])
+  @@index([envelopeId])
+  @@index([applicationId, detectorId])
+  @@index([applicationId, status])
+  @@index([applicationId, locationOptIn, receivedAt])
+  @@map("security_events")
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+/// One device identity key (EC P-256, held in the device's Keystore) that
+/// evidence envelopes are verified against. One row per KEY, never
+/// overwritten: a reinstall or key rotation registers a new row, so a
+/// request that knows another device's `deviceId` cannot replace that
+/// device's key. `deviceId` is an advisory label only.
+model DeviceRegistration {
+  id                 String   @id @default(cuid())
+  application        Application @relation(fields: [applicationId], references: [id])
+  applicationId      String
+  /// Package name the key was registered for; envelopes must carry the same `appId`.
+  appId              String
+  deviceId           String?  // advisory: the SDK's device id, if sent
+  deviceKeyId        String   @unique // Base64(SHA-256(SPKI DER)) — envelope lookup key
+  publicKey          String   // Base64 X.509 SPKI (EC P-256)
+  attestationChain   String[] // Base64 DER certificates, leaf first, as received
+  /// Result of parsing the chain at registration: PARSED | KEY_MISMATCH | UNPARSEABLE.
+  /// The verification result is attestationVerdict (+ attestationDetails).
+  attestationStatus  String
+  /// verified | unverified | software-only — see AttestationVerdict in src/crypto/ecdsa.ts.
+  /// Checked against the application's attestationPolicy.
+  attestationVerdict String   @default("unverified")
+  /// The device signed a one-time server challenge with this key at its last registration.
+  possessionVerified Boolean  @default(false)
+  attestationDetails Json
+  sdkVersion         String
+  createdAt          DateTime @default(now())
+  lastSeenAt         DateTime @default(now())
+  /// Highest monotonic counter accepted from this key.
+  lastCounter        BigInt   @default(0)
+  /// Signing certificate SHA-256 the app reported at registration (uppercase hex).
+  signingCertSha256  String?
+  /// Country (ISO alpha-2) of the registration request IP; null if unknown or private.
+  registrationCountry String?
+  /// Highest monotonic counter accepted on POST /v1/risk/events (its own
+  /// stream, separate from `lastCounter` of evidence envelopes).
+  lastRiskCounter    BigInt   @default(0)
+  envelopes          EvidenceEnvelope[]
+  sessionEvents      SessionEvent[]
+  transactionEvents  TransactionEvent[]
+
+  @@index([applicationId, deviceId])
+  @@map("device_registrations")
+}
+
+/// One accepted evidence envelope — the signed record behind the
+/// `SecurityEvent` rows it produced. Keeps the exact signed text and the
+/// signature so the evidence can be re-verified later. The unique indexes
+/// are the replay rules: a nonce, a counter value, or an event id can be
+/// accepted once per device key.
+model EvidenceEnvelope {
+  id                   String   @id @default(cuid())
+  eventId              String   @unique
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  applicationId        String
+  monotonicCounter     BigInt
+  nonce                String
+  eventTime            DateTime // device clock (advisory)
+  receivedAt           DateTime @default(now())
+  /// Canonical JSON that was verified (every field except `signature`).
+  signedPayload        String
+  signature            String   // Base64 DER ECDSA P-256
+  /// true when location fields were removed from `signedPayload` because
+  /// the results carried coordinates without `location_opt_in`; such a
+  /// payload can no longer be re-verified against `signature`.
+  payloadRedacted      Boolean  @default(false)
+  events               SecurityEvent[]
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, monotonicCounter])
+  @@index([applicationId, receivedAt])
+  @@map("evidence_envelopes")
+}
+
+/// Outbound alert policy for one application — "call this URL when a
+/// DETECTED event meets or exceeds this severity." Of the usual
+/// threat-response actions (block / alert / log), this platform only ever alerts (no in-app blocking
+/// decision is made server-side — that stays the SDK/host app's own
+/// call, matching the existing "SDK reports, app decides" boundary).
+/// One row per application; multiple configs would mean multiple
+/// destinations, which isn't a real requirement yet — kept to one row so
+/// there's nothing to reconcile if it were ever added.
+model WebhookConfig {
+  id             String         @id @default(cuid())
+  application    Application    @relation(fields: [applicationId], references: [id])
+  applicationId  String         @unique
+  url            String
+  secretEncrypted String
+  minSeverity    AlertSeverity  @default(HIGH)
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  lastTriggeredAt DateTime?
+  lastStatusCode  Int?
+  lastError       String?
+
+  @@map("webhook_configs")
+}
+
+/// Which device keys an account has used in an application. Hashes only
+/// (HMAC with the app's `accountHashSalt`); no account id, name or number.
+model AccountDeviceBinding {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  accountHash          String      // 64 lowercase hex
+  deviceKeyId          String
+  deviceRegistrationId String
+  firstSeenAt          DateTime    @default(now())
+  lastSeenAt           DateTime    @default(now())
+
+  @@unique([applicationId, accountHash, deviceKeyId])
+  @@index([applicationId, accountHash, firstSeenAt])
+  @@index([applicationId, deviceKeyId])
+  @@map("account_device_bindings")
+}
+
+/// One accepted session risk event (POST /v1/risk/events, type "session").
+/// Hashes only. Location is coarse (2 decimals, ~1 km) and present only
+/// when the user opted in; `ipCountry` is the request IP's country if known.
+model SessionEvent {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  deviceKeyId          String
+  eventId              String
+  nonce                String
+  monotonicCounter     BigInt
+  sdkVersion           String
+  accountHash          String
+  sessionHash          String
+  /// login | resume | logout
+  sessionEvent         String
+  riskScore            Int?
+  /// LOW | MEDIUM | HIGH | UNKNOWN — as the SDK reported it.
+  riskVerdict          String
+  latitude             Float?
+  longitude            Float?
+  locationCapturedAt   DateTime?
+  ipCountry            String?
+  eventTime            DateTime    // device clock
+  receivedAt           DateTime    @default(now())
+  signature            String
+  /// Rules that fired for this event: [{ rule, severity, explanation, evidence }].
+  riskEvents           Json        @default("[]")
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, eventId])
+  @@index([applicationId, accountHash, eventTime])
+  @@index([applicationId, deviceKeyId, receivedAt])
+  @@index([applicationId, receivedAt])
+  @@map("session_events")
+}
+
+/// One accepted transaction risk event (type "transaction"). Never an amount.
+model TransactionEvent {
+  id                   String      @id @default(cuid())
+  application          Application @relation(fields: [applicationId], references: [id])
+  applicationId        String
+  deviceRegistration   DeviceRegistration @relation(fields: [deviceRegistrationId], references: [id])
+  deviceRegistrationId String
+  deviceKeyId          String
+  eventId              String
+  nonce                String
+  monotonicCounter     BigInt
+  sdkVersion           String
+  accountHash          String
+  sessionHash          String
+  beneficiaryHash      String
+  currency             String
+  channel              String
+  bindingSha256        String
+  riskScore            Int?
+  riskVerdict          String
+  latitude             Float?
+  longitude            Float?
+  locationCapturedAt   DateTime?
+  ipCountry            String?
+  eventTime            DateTime
+  receivedAt           DateTime    @default(now())
+  signature            String
+  riskEvents           Json        @default("[]")
+
+  @@unique([deviceRegistrationId, nonce])
+  @@unique([deviceRegistrationId, eventId])
+  @@index([applicationId, accountHash, eventTime])
+  @@index([applicationId, accountHash, beneficiaryHash])
+  @@index([applicationId, deviceKeyId, receivedAt])
+  @@index([applicationId, receivedAt])
+  @@map("transaction_events")
+}
+
+/// Append-only audit trail for application settings: who changed which
+/// field, when, old and new value; also salt generation (and reveals, from
+/// an earlier version that had a reveal endpoint) — never the salt itself.
+/// `performedByUserId` is a plain id, like
+/// CredentialAuditLog, so a deleted user does not erase history.
+model ApplicationSettingsAuditLog {
+  id                String      @id @default(cuid())
+  application       Application @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  /// SETTINGS_UPDATED | ACCOUNT_HASH_SALT_GENERATED | ACCOUNT_HASH_SALT_REVEALED
+  action            String
+  field             String?
+  oldValue          Json?
+  newValue          Json?
+  performedByUserId String?
+  performedAt       DateTime    @default(now())
+  ipAddress         String?
+
+  @@index([applicationId, performedAt])
+  @@map("application_settings_audit_logs")
+}
+
+/// Latest shared location per device (Task 9.3), from `location_heartbeat`
+/// events the SDK sends while the user shares location. One row per
+/// (application, device): updated, never appended. Coordinates are null after
+/// the user turned sharing off (the SDK then sends a "cleared" heartbeat).
+/// `lastCounter` is the device's last accepted heartbeat counter (envelope
+/// mode), kept apart from DeviceRegistration.lastCounter so heartbeats sent
+/// directly never collide with queued evidence envelopes.
+model DeviceLocation {
+  id            String      @id @default(cuid())
+  application   Application @relation(fields: [applicationId], references: [id])
+  applicationId String
+  deviceId      String
+  latitude      Float?
+  longitude     Float?
+  accuracyM     Float?
+  isMock        Boolean?
+  capturedAt    DateTime?
+  receivedAt    DateTime
+  lastCounter   BigInt      @default(0)
+
+  @@unique([applicationId, deviceId])
+  @@index([applicationId, receivedAt])
+  @@map("device_locations")
+}
+
+/// Short trail of shared locations per device: at most 20 points, none
+/// older than 7 days (pruned on every write; see src/location/deviceLocations.ts).
+model DeviceLocationPoint {
+  id            String      @id @default(cuid())
+  application   Application @relation(fields: [applicationId], references: [id])
+  applicationId String
+  deviceId      String
+  latitude      Float
+  longitude     Float
+  accuracyM     Float?
+  receivedAt    DateTime    @default(now())
+
+  @@index([applicationId, deviceId, receivedAt])
+  @@map("device_location_points")
+}
+
+/// One published version of an application's signed remote configuration
+/// (Task 10.0, src/remoteConfig/). `payload` holds only the validated
+/// allowed settings (src/remoteConfig/settings.ts); the signature is computed
+/// when a device asks (GET /v1/config) with CONFIG_SIGNING_KEY, so it is never
+/// stored. Versions only grow: a rollback publishes a copy of an older version
+/// as a new, higher version. At most one row per application is `active`.
+model RemoteConfig {
+  id                String      @id @default(cuid())
+  application       Application @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  version           Int
+  payload           Json
+  createdByUserId   String
+  createdAt         DateTime    @default(now())
+  expiresAt         DateTime
+  active            Boolean     @default(true)
+  /// Set when this version was published by a rollback: the version it copies.
+  copiedFromVersion Int?
+  audits            RemoteConfigAudit[]
+
+  @@unique([applicationId, version])
+  @@index([applicationId, active])
+  @@map("remote_configs")
+}
+
+/// Who published or rolled back which remote-config version, when, from where,
+/// and which settings changed. Append-only.
+model RemoteConfigAudit {
+  id                String        @id @default(cuid())
+  application       Application   @relation(fields: [applicationId], references: [id])
+  applicationId     String
+  remoteConfig      RemoteConfig? @relation(fields: [remoteConfigId], references: [id])
+  remoteConfigId    String?
+  /// PUBLISHED | ROLLED_BACK
+  action            String
+  version           Int
+  fromVersion       Int?
+  /// [{ field, oldValue, newValue }] against the previously active version.
+  changes           Json?
+  performedByUserId String
+  performedAt       DateTime      @default(now())
+  ipAddress         String?
+
+  @@index([applicationId, performedAt])
+  @@map("remote_config_audits")
+}

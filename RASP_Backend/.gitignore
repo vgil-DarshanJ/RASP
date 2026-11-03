@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.log
+
+# Environment files can hold secrets: never commit them; only the examples are tracked.
+.env
+.env.*
+!.env.example
+!.env.server.example
+
+# Production deployment: filled-in settings, backups and the operator's list stay on the server.
+deploy/production.env
+deploy/backups/
+deploy/reputation/
+deploy/secrets/
+
+# Google service account keys (Play Integrity) must never be committed.
+*service-account*.json
+play-integrity*.json
+
+# scripts/office-server.sh: logs and pids on the office server.
+.office-server/

@@ -1,0 +1,10 @@
+node_modules
+dist
+test
+deploy
+reputation
+*.log
+.env
+.env.*
+.github
+.git
