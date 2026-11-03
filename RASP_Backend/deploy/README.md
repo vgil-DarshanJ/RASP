@@ -13,8 +13,8 @@ One server, one HTTPS host name, Docker. `docker-compose.prod.yml` runs:
 
 1. A Linux server with Docker and Compose, ports 80 and 443 open, and a DNS
    record for your host name pointing at it.
-2. Put both repositories side by side on the server, as on the development
-   machine: `.../BE` (this one) and `.../FE`.
+2. Clone this monorepo on the server. The deployment uses its sibling
+   directories `RASP_Backend/` (this module) and `RASP_Dashboard/`.
 3. `cp deploy/production.env.example deploy/production.env` and fill it in.
    Generate the secrets on the server (`openssl rand -hex 32` for
    `CREDENTIAL_ENCRYPTION_KEY`, `openssl rand -base64 48` for the others).
@@ -53,17 +53,17 @@ only on the office's own WPA2/WPA3 Wi-Fi, never expose these ports to the
 internet. The trial app allows plain HTTP only to 192.168.2.208
 (`android/app/src/main/res/xml/network_security_config.xml`).
 
-First time on the Linux server (repositories side by side):
+First time on the Linux server (from the monorepo root):
 
 ```sh
-cd ~/Darshan/RASP_Backend
+cd ~/Darshan/RASP/RASP_Backend
 cp .env.server.example .env
 # Edit .env: JWT_SECRET (`openssl rand -base64 48`), CREDENTIAL_ENCRYPTION_KEY
 # (`openssl rand -hex 32`); check DATABASE_URL, CORS_ORIGINS, DASHBOARD_URL,
 # VISITOR_SITE_URL, PUBLIC_INGESTION_URL.
-cd ~/Darshan/RASP_Dashboard
+cd ~/Darshan/RASP/RASP_Dashboard
 cp .env.local.example .env.local
-cd ~/Darshan/RASP_Backend
+cd ~/Darshan/RASP/RASP_Backend
 bash scripts/office-server.sh deploy
 ```
 
@@ -81,7 +81,8 @@ sharing is enabled.
 
 ## Operations
 
-- Update: `git pull` in both repositories, then the same `up -d --build`.
+- Update: run `git pull --ff-only` from the monorepo root, then the same
+  `up -d --build` command from `RASP_Backend/`.
 - Logs: `docker compose -f deploy/docker-compose.prod.yml logs -f backend proxy`.
 - Monitoring: point an uptime check at `https://<DOMAIN>/healthz` (it
   checks PostgreSQL and Redis; 503 when either is down).

@@ -11,8 +11,8 @@
 #   portal   http://192.168.2.208:5050   (npm run start:portal)
 #   visitor  http://192.168.2.208:6050   (npm run start:visitor)
 #
-# Repositories side by side, e.g. ~/Darshan/RASP_Backend and
-# ~/Darshan/RASP_Dashboard. Override with FE_DIR=/path/to/dashboard.
+# In the monorepo, RASP_Backend and RASP_Dashboard are sibling directories.
+# Override with FE_DIR=/path/to/dashboard when running outside that layout.
 # Logs and pids: <backend repo>/.office-server/ (ignored by git).
 set -u
 
@@ -131,8 +131,9 @@ start_databases() {
 deploy() {
   set -e
   echo "== Backend: $BE_DIR"
+  # Pull the monorepo once rather than trying to pull a module directory.
+  git -C "$BE_DIR/.." pull --ff-only
   cd "$BE_DIR"
-  git pull --ff-only
   npm ci
   start_databases
   npx prisma generate

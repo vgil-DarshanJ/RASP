@@ -20,7 +20,8 @@ void main() {
     }
   });
 
-  final backend = File('../../../FROUNTEND_BACKEND_RASPOWN/BE/src/detectors/severity.ts');
+  // In the monorepo, the backend is a sibling of RASP_SDK_Wrappers.
+  final backend = File('../../../RASP_Backend/src/detectors/severity.ts');
   test('the fixture matches the backend table', () {
     final source = backend.readAsStringSync();
     final start = source.indexOf('DETECTOR_SEVERITY');

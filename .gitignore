@@ -1,0 +1,38 @@
+# Environment files and deployment secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+**/deploy/production.env
+**/deploy/backups/
+**/deploy/reputation/
+**/deploy/secrets/
+
+# Node / Next.js / TypeScript output
+**/node_modules/
+**/dist/
+**/.next/
+**/*.tsbuildinfo
+**/*.log
+
+# Flutter and Android / Gradle output
+**/.dart_tool/
+**/.gradle/
+**/.kotlin/
+**/.cxx/
+**/build/
+**/local.properties
+**/*.iml
+**/.idea/
+**/*.hprof
+
+# Local coverage, package archives, and generated mobile release artifacts
+**/coverage/
+**/*.apk
+**/*.aab
+**/*.aar
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
