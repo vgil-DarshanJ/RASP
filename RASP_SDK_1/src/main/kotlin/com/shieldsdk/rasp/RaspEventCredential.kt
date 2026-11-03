@@ -1,0 +1,69 @@
+package com.shieldsdk.rasp
+
+import org.json.JSONObject
+
+/**
+ * The parsed shape of the JSON credential file issued by the RASP Shield
+ * platform's backend (`POST /v1/credentials/applications/:id/credentials`)
+ * — see `FROUNTEND_BACKEND_RASPOWN/BE/src/credentials/routes.ts` for the
+ * exact fields this mirrors. A host app downloads that JSON once from the
+ * platform's web UI and passes its raw text to
+ * [RaspEventShipper.configure] — this SDK never fetches or generates a
+ * credential itself.
+ *
+ * [apiSecret] backs the HMAC request signature every ingestion call now
+ * carries (see [RaspEventShipper]'s class doc) — without it, a leaked
+ * [apiKey] alone used to be sufficient to post events as this
+ * application; this closes that gap. Held in memory only, for the
+ * process lifetime of whatever configured it — never persisted to disk
+ * by this SDK.
+ */
+public data class RaspEventCredential(
+    val organizationId: String,
+    val applicationId: String,
+    val apiKey: String,
+    val apiSecret: String,
+    val ingestionUrl: String,
+    /**
+     * Per-application salt (hex) for hashing account, session and beneficiary
+     * ids (Task 8.1, [RaspAccountHasher]); `null` in credentials issued before
+     * it existed.
+     */
+    val accountHashSalt: String? = null,
+    /**
+     * Ed25519 public key (Base64) that signs the backend's malware reputation
+     * list (`reputation_public_key`); `null` when the backend has none.
+     */
+    val reputationPublicKey: String? = null,
+    /**
+     * Ed25519 public key (Base64 SPKI) that signs the remote configuration
+     * (`config_public_key`, Task 10.0); `null` when the backend has none.
+     */
+    val configPublicKey: String? = null,
+)
+
+public object RaspEventCredentialParser {
+
+    /** `null` on any malformed/incomplete JSON — never throws, matching
+     *  every other parsing boundary in this SDK. */
+    fun parse(json: String): RaspEventCredential? = try {
+        val obj = JSONObject(json)
+        val organizationId = obj.getString("organization_id")
+        val applicationId = obj.getString("application_id")
+        val apiKey = obj.getString("api_key")
+        val apiSecret = obj.getString("api_secret")
+        val ingestionUrl = obj.getString("ingestion_url")
+        if (organizationId.isBlank() || applicationId.isBlank() || apiKey.isBlank() ||
+            apiSecret.isBlank() || ingestionUrl.isBlank()
+        ) {
+            null
+        } else {
+            val salt = obj.optString("account_hash_salt", "").takeIf(RaspAccountHasher::isValidSalt)
+            val reputationKey = obj.optString("reputation_public_key", "").trim().takeIf { it.isNotEmpty() }
+            val configKey = obj.optString("config_public_key", "").trim().takeIf { it.isNotEmpty() }
+            RaspEventCredential(organizationId, applicationId, apiKey, apiSecret, ingestionUrl, salt, reputationKey, configKey)
+        }
+    } catch (e: Exception) {
+        null
+    }
+}

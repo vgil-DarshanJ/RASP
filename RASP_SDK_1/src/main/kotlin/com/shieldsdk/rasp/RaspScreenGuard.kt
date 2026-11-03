@@ -1,0 +1,295 @@
+package com.shieldsdk.rasp
+
+import android.app.Activity
+import android.os.Build
+import android.view.MotionEvent
+import android.view.Window
+
+/**
+ * The Activity-lifecycle-bound half of screen protection: touch-obscured
+ * tracking (overlay/tapjacking corroboration) and screenshot-event capture
+ * (API 34+). [ScreenshotGuard] already covers the stateless FLAG_SECURE
+ * toggle and is reused here rather than duplicated — this class adds
+ * exactly what genuinely needs to live across an Activity's attach/detach
+ * lifecycle.
+ *
+ * ## Why this exists as its own class, separate from [RaspShieldCore]
+ *
+ * Every [RaspShieldCore] check takes a `Context` and is stateless per call.
+ * Touch-obscured tracking and screenshot-event capture are fundamentally
+ * different: they require wrapping the *live* `Window.Callback` for as
+ * long as an Activity is on screen, and unwrapping it again on detach — a
+ * one-shot `Context`-based call cannot express that. A native host
+ * constructs one `RaspScreenGuard` per Activity (or reuses one across
+ * Activities, calling [attach]/[detach] on each transition) — the exact
+ * same lifecycle [RaspShieldPlugin] already manages for the Flutter path,
+ * ported here with no Flutter dependency.
+ *
+ * ## Usage
+ *
+ * ```kotlin
+ * class TransferActivity : AppCompatActivity() {
+ *     private val screenGuard = RaspScreenGuard()
+ *
+ *     override fun onCreate(savedInstanceState: Bundle?) {
+ *         screenGuard.attach(this)   // apply BEFORE super.onCreate() — see class doc
+ *         super.onCreate(savedInstanceState)
+ *     }
+ *
+ *     override fun onDestroy() {
+ *         screenGuard.detach()
+ *         super.onDestroy()
+ *     }
+ * }
+ * ```
+ *
+ * ## FLAG_SECURE timing — same disclosed risk as [ScreenshotGuard]
+ *
+ * [attach] applies `FLAG_SECURE` immediately, and a native host calling it
+ * before `super.onCreate()` gets the same early-as-possible timing the
+ * pre-extraction `MainActivity.onCreate()` had — this is the one genuine
+ * advantage the native path has over the Flutter plugin path, which has no
+ * hook that runs that early (`onAttachedToActivity` necessarily fires
+ * after `super.onCreate()`). Still test on your real OEM device matrix —
+ * see `docs/LEAN_SECURITY_INTEGRATION_GUIDE.md` Part C for the specific
+ * OnePlus compositor finding this disclosure is based on.
+ */
+class RaspScreenGuard {
+
+    companion object {
+        /**
+         * Suppression window (see [registerScreenCaptureCallback]) for
+         * platform-generated `ScreenCaptureCallback` noise around Activity
+         * start/registration — chiefly Android's task-snapshot capture for
+         * Recents. 2s comfortably covers a `mainExecutor`-queued delayed
+         * fire on real hardware without meaningfully widening the gap in
+         * which a genuine startup-time screenshot goes undetected (a user
+         * cannot physically trigger a hardware-button screenshot in under
+         * ~2s of the app becoming visible).
+         */
+        private const val SCREEN_CAPTURE_STARTUP_SUPPRESSION_MILLIS = 2000L
+    }
+
+    private var activity: Activity? = null
+    private var originalWindowCallback: Window.Callback? = null
+    private var screenCaptureCallback: Activity.ScreenCaptureCallback? = null
+
+    @Volatile
+    private var lastTouchObscured: Boolean? = null
+
+    @Volatile
+    private var screenshotEventCount = 0
+
+    @Volatile
+    private var lastScreenshotEventAtMillis: Long? = null
+
+    /** See [registerScreenCaptureCallback]'s doc for why this exists. */
+    @Volatile
+    private var screenCaptureRegisteredAtMillis: Long = 0L
+
+    /**
+     * Applies `FLAG_SECURE`, installs touch-obscured tracking, and
+     * registers the screenshot-event callback (API 34+ only). Safe to call
+     * again on the same or a different Activity — [detach] is called
+     * internally first if something is already attached.
+     */
+    fun attach(target: Activity) {
+        if (activity != null) detach()
+        activity = target
+
+        ScreenshotGuard.enable(target)
+
+        // Tell the platform to never generate a task-snapshot screenshot of
+        // this Activity for the Recents UI (API 33+; default `true` on
+        // every Activity). That snapshot is taken automatically around
+        // Activity start on every launch, independent of any user action,
+        // and on-device testing shows it can be observed by
+        // ScreenCaptureCallback (registered below) as a spurious
+        // "screenshot taken" event the instant the app opens. This is the
+        // primary fix for that false positive; the startup suppression
+        // window in registerScreenCaptureCallback is the fallback for OS
+        // versions/OEM skins where this request isn't honored. See
+        // https://source.android.com/docs/core/perf/task-snapshots.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                target.setRecentsScreenshotEnabled(false)
+            } catch (e: Exception) {
+                // Purely a false-positive mitigation, not a security
+                // control — never block attach() on this.
+            }
+        }
+
+        installTouchObscuredTracking(target)
+        registerScreenCaptureCallback(target)
+    }
+
+    /** Idempotent — safe to call when never attached or already detached. */
+    fun detach() {
+        unregisterScreenCaptureCallback()
+        restoreWindowCallback()
+        activity = null
+    }
+
+    // ── FLAG_SECURE passthrough — see ScreenshotGuard for the real logic ──
+
+    fun isScreenshotProtectionActive(): Boolean? = ScreenshotGuard.isActive(activity)
+    fun enableScreenshotProtection() = ScreenshotGuard.enable(activity)
+    fun disableScreenshotProtection() = ScreenshotGuard.disable(activity)
+
+    // ── Touch-obscured tracking ───────────────────────────────────────
+
+    private fun installTouchObscuredTracking(target: Activity) {
+        val window = target.window
+        val current = window.callback ?: return
+        originalWindowCallback = current
+        window.callback = TouchObscuredWindowCallback(current) { obscured ->
+            lastTouchObscured = obscured
+        }
+    }
+
+    private fun restoreWindowCallback() {
+        val current = activity ?: return
+        val original = originalWindowCallback ?: return
+        try {
+            if (current.window.callback is TouchObscuredWindowCallback) {
+                current.window.callback = original
+            }
+        } catch (e: Exception) {
+            // Activity/window may already be torn down; nothing to restore.
+        }
+        originalWindowCallback = null
+    }
+
+    private class TouchObscuredWindowCallback(
+        private val delegate: Window.Callback,
+        private val onTouch: (Boolean) -> Unit,
+    ) : Window.Callback by delegate {
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            onTouch(
+                (event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED) != 0 ||
+                    (event.flags and MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED) != 0
+            )
+            return delegate.dispatchTouchEvent(event)
+        }
+    }
+
+    /**
+     * `null` before any touch has been observed this attach — never
+     * silently treated as "not obscured." See [RaspOverlayEvidence].
+     */
+    fun currentTouchObscuredState(): Boolean? = lastTouchObscured
+
+    // ── Screenshot-event capture (API 34+) ────────────────────────────
+
+    private fun registerScreenCaptureCallback(target: Activity) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        try {
+            val callback = Activity.ScreenCaptureCallback {
+                val now = System.currentTimeMillis()
+                // Drop anything landing inside the startup suppression
+                // window — see the class-level constant doc. Not a
+                // one-shot flush: `registerScreenCaptureCallback` dispatches
+                // through `target.mainExecutor` (a posted message, not a
+                // synchronous call), so a spurious fire tied to
+                // registration/task-snapshot capture can still arrive on
+                // the main looper after a flush already ran. A window
+                // survives that delay; a single reset does not.
+                if (now - screenCaptureRegisteredAtMillis >= SCREEN_CAPTURE_STARTUP_SUPPRESSION_MILLIS) {
+                    screenshotEventCount += 1
+                    lastScreenshotEventAtMillis = now
+                }
+            }
+            target.registerScreenCaptureCallback(target.mainExecutor, callback)
+            screenCaptureCallback = callback
+            // ScreenshotGuard.enable(target) — applying FLAG_SECURE — runs
+            // an instant before this registration, on every attach()
+            // unconditionally. Discard anything already counted at this
+            // exact moment, and arm the suppression window from right now,
+            // so that sequence (or the registration call itself, or a
+            // delayed task-snapshot fire) can never be misreported as a
+            // real screenshot the user just took; a genuine one taken
+            // after the window elapses still increments normally.
+            screenshotEventCount = 0
+            lastScreenshotEventAtMillis = null
+            screenCaptureRegisteredAtMillis = System.currentTimeMillis()
+        } catch (e: Exception) {
+            screenCaptureCallback = null
+        }
+    }
+
+    private fun unregisterScreenCaptureCallback() {
+        val current = activity
+        val callback = screenCaptureCallback ?: return
+        if (current != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                current.unregisterScreenCaptureCallback(callback)
+            } catch (e: Exception) {
+                // Activity may already be torn down; nothing to unregister.
+            }
+        }
+        screenCaptureCallback = null
+    }
+
+    /**
+     * Read-and-clear: call once per scan cycle. The count reported is
+     * exactly how many screenshot events fired since the last read, then
+     * resets — never double-reports the same capture.
+     */
+    fun drainScreenshotEventEvidence(): RaspScreenshotEventEvidence {
+        val count = screenshotEventCount
+        val lastAt = lastScreenshotEventAtMillis
+        screenshotEventCount = 0
+        return RaspScreenshotEventEvidence(
+            supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE,
+            detected = count > 0,
+            count = count,
+            lastAtMillis = lastAt,
+        )
+    }
+
+    /**
+     * Read-only counterpart to [drainScreenshotEventEvidence] — never resets
+     * the counter. [RaspLeanSession] (native) uses the destructive drain
+     * above on its own poll tick; a host app polling this class directly for
+     * its own live UI should use this one instead, so it can never reset a
+     * count the lean session hasn't seen yet — same risk [RaspClipboardGuard]
+     * .peekEvidence exists to avoid.
+     */
+    fun peekScreenshotEventEvidence(): RaspScreenshotEventEvidence = RaspScreenshotEventEvidence(
+        supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE,
+        detected = screenshotEventCount > 0,
+        count = screenshotEventCount,
+        lastAtMillis = lastScreenshotEventAtMillis,
+    )
+
+    /**
+     * What this build/OS combination can actually do. See this class's
+     * doc for why screen-recording/casting has no complementary
+     * *detection* capability on any Android API level — `FLAG_SECURE` is
+     * the platform's actual defense there, not a paired detector.
+     */
+    fun screenCaptureCapabilities(): RaspScreenCaptureCapabilities = RaspScreenCaptureCapabilities(
+        screenshotPreventionSupported = true,
+        screenshotDetectionSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE,
+        screenshotDetectionMinSdkInt = Build.VERSION_CODES.UPSIDE_DOWN_CAKE,
+        screenRecordingDetectionSupported = false,
+        screenShareDetectionSupported = false,
+        externalDisplayDetectionSupported = true,
+    )
+}
+
+data class RaspScreenshotEventEvidence(
+    val supported: Boolean,
+    val detected: Boolean,
+    val count: Int,
+    val lastAtMillis: Long?,
+)
+
+data class RaspScreenCaptureCapabilities(
+    val screenshotPreventionSupported: Boolean,
+    val screenshotDetectionSupported: Boolean,
+    val screenshotDetectionMinSdkInt: Int,
+    val screenRecordingDetectionSupported: Boolean,
+    val screenShareDetectionSupported: Boolean,
+    val externalDisplayDetectionSupported: Boolean,
+)

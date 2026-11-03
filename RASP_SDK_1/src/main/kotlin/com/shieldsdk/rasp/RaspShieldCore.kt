@@ -1,0 +1,1089 @@
+package com.shieldsdk.rasp
+
+import android.content.Context
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+/**
+ * The single public entry point for the pure Kotlin/Java native SDK —
+ * consumed directly by [RaspShieldNative] (the Flutter-free facade module)
+ * and indirectly by the Flutter plugin's `RaspSecurityChannelHandler`,
+ * which now delegates here instead of holding its own copy of any
+ * detection logic. See the Android Native/Flutter Feature Parity plan for
+ * the full rationale.
+ *
+ * ## Every detector, two ways
+ *
+ * Several checks do real I/O (Keystore key generation, `Runtime.exec`,
+ * filesystem reads) and must never run on the main thread. Every detector
+ * therefore ships as a matched pair:
+ * - `checkXBlocking(context): RaspCheckResult` — synchronous. Call it off
+ *   the main thread yourself if you already manage background execution.
+ * - `checkXAsync(context, callback)` — runs on an internal background
+ *   executor and delivers [callback] on the main thread via [Handler], so
+ *   UI code can react safely with no threading of its own. Callable from
+ *   Java as `checkXAsync(context, result -> { ... })`.
+ *
+ * No `kotlinx-coroutines` dependency is required either way — a deliberate
+ * choice so this module never forces a coroutines dependency on a
+ * consuming app that doesn't already use one.
+ *
+ * ## Failure model
+ *
+ * Every detector is wrapped by [runGuarded]: an uncaught exception inside
+ * detector logic can never escape to the caller — it becomes a
+ * [RaspCheckStatus.ERROR] result with a `reason`, and is reported to
+ * [logger] if one is set. See [RaspCheckResult]/[RaspCheckStatus] for the
+ * full 5-state contract this never relaxes.
+ */
+object RaspShieldCore {
+
+    /**
+     * Pluggable error observability — see [RaspShieldLogger]. Default is a
+     * silent no-op; set this once at app startup to wire detector-level
+     * exceptions into your own crash-reporting pipeline.
+     */
+    @Volatile
+    var logger: RaspShieldLogger = RaspShieldLogger.NONE
+
+    /**
+     * The fingerprint a running build's signing certificate must match for
+     * [checkRepackagingBlocking]/[checkRepackagingAsync] (Phase 3) to run
+     * at all. Deliberately explicit — **not** read via reflection from a
+     * host app's generated `BuildConfig` (see the Flutter plugin's
+     * `readHostSigningBuildConfig()`, a convention specific to that
+     * reference app and not portable to an arbitrary native host). Pass
+     * `null`/blank to clear it.
+     */
+    @Volatile
+    var expectedSigningCertificateSha256: String? = null
+        private set
+
+    fun configureExpectedSigningCertificate(fingerprint: String?) {
+        val normalized = (fingerprint ?: "")
+            .replace(Regex("[:\\s-]"), "")
+            .uppercase()
+        expectedSigningCertificateSha256 = normalized.ifEmpty { null }
+    }
+
+    /** Host + expected certificate SHA-256 for [checkMitmBlocking]'s TLS-pin
+     *  half (Phase 8). `null` means "not configured" — see
+     *  [configureCertificatePin]. */
+    @Volatile
+    private var pinnedHost: String? = null
+
+    @Volatile
+    private var pinnedCertificatePins: RaspCertificatePinProbes.PinSet? = null
+
+    /**
+     * Configures the backend host + expected certificate fingerprint for
+     * the TLS-pinning half of MITM detection. Pass `null` for either to
+     * clear — the pin check then reports [CertificatePinCheckResult.NOT_ATTEMPTED]
+     * rather than a silent pass. No backend/license dependency: this is a
+     * plain, explicit parameter your app supplies, exactly like
+     * [configureExpectedSigningCertificate].
+     */
+    fun configureCertificatePin(host: String?, pinnedSpkiPin: String?) {
+        pinnedHost = host?.takeIf { it.isNotBlank() }
+        pinnedCertificatePins = pinnedSpkiPin?.takeIf { it.isNotBlank() }
+            ?.let { RaspCertificatePinProbes.PinSet(setOf(it)) }
+    }
+
+    @JvmStatic
+    fun configureCertificatePins(host: String?, current: Set<String>, backup: Set<String> = emptySet(), revoked: Set<String> = emptySet()) {
+        pinnedHost = host?.takeIf { it.isNotBlank() }
+        pinnedCertificatePins = RaspCertificatePinProbes.PinSet(current, backup, revoked)
+    }
+
+    private val backgroundExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "RaspShieldCore-worker").apply { isDaemon = true }
+        }
+
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    /**
+     * Runs [block], mapping any thrown exception to
+     * [RaspCheckStatus.ERROR] and notifying [logger] — the one place every
+     * detector's failure handling funnels through. `block` itself should
+     * still handle its own expected failure paths (see each probe class);
+     * this is the last-resort net, not the primary error-handling
+     * mechanism.
+     */
+    private inline fun runGuarded(detectorId: String, block: () -> RaspCheckResult): RaspCheckResult {
+        return try {
+            block()
+        } catch (e: Exception) {
+            notifyLogger(detectorId, e)
+            RaspCheckResult.error(detectorId, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * For the checks ported to the native core (hook maps, root files and
+     * mounts, hashing): loads the verified library once, runs [block] (which
+     * uses the native core when loaded, Kotlin otherwise) and, when the native
+     * core is not in use, adds `native_core_unavailable` evidence with the
+     * reason. The verdict itself always comes from the same rules.
+     */
+    private inline fun nativeBacked(context: Context, block: () -> RaspCheckResult): RaspCheckResult {
+        try {
+            RaspNative.ensureLoaded(context)
+        } catch (e: Throwable) {
+            // ensureLoaded does not throw; the Kotlin path runs regardless.
+        }
+        val result = block()
+        val extra = RaspNative.unavailableEvidence()
+        return if (extra.isEmpty()) result else result.copy(evidence = result.evidence + extra)
+    }
+
+    /** [logger] itself must never be allowed to crash a detector. */
+    private fun notifyLogger(detectorId: String, throwable: Throwable) {
+        try {
+            logger.onDetectorError(detectorId, throwable)
+        } catch (e: Exception) {
+            // A failing logger must never take down the detector that
+            // triggered it — dropped intentionally.
+        }
+    }
+
+    private fun runAsync(
+        context: Context,
+        callback: (RaspCheckResult) -> Unit,
+        blocking: (Context) -> RaspCheckResult,
+    ) {
+        val appContext = context.applicationContext ?: context
+        backgroundExecutor.execute {
+            val result = blocking(appContext)
+            mainHandler.post { callback(result) }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Device integrity (Phase 1)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── Root ───────────────────────────────────────────────────────────
+
+    fun checkRootBlocking(context: Context): RaspCheckResult = runGuarded("root_jailbreak") { nativeBacked(context) {
+        val probes = RaspDeviceIntegrityProbes(context)
+        val (signals, verdict) = probes.rootAssessment()
+        val posture = probes.posturesSignals()
+        val evidence = signals.map { RaspEvidence("root_signal", it, if (RaspRootAnalysis.isHardSignal(it)) "hard" else "soft") } +
+            posture.map { RaspEvidence("build_posture", it, "low_severity") } +
+            listOf(RaspEvidence("signal_count", signals.size))
+        when (verdict) {
+            RaspRootAnalysis.RootVerdict.DETECTED -> RaspCheckResult.detected("root_jailbreak", evidence)
+            RaspRootAnalysis.RootVerdict.CLEAN -> RaspCheckResult.secure("root_jailbreak", evidence)
+            RaspRootAnalysis.RootVerdict.UNAVAILABLE -> RaspCheckResult.unavailable("root_jailbreak", "Root mount-table probe unavailable")
+        }
+    } }
+
+    fun checkRootAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkRootBlocking)
+
+    // ── Emulator ───────────────────────────────────────────────────────
+
+    fun checkEmulatorBlocking(context: Context): RaspCheckResult = runGuarded("emulator") {
+        val probes = RaspDeviceIntegrityProbes(context)
+        val signals = probes.emulatorSignals()
+        val emulated = RaspEmulatorAnalysis.isEmulator(signals)
+        val evidence = signals.map { RaspEvidence("emulator_signal", it) } +
+            listOf(RaspEvidence("signal_count", signals.size))
+        if (emulated) RaspCheckResult.detected("emulator", evidence)
+        else RaspCheckResult.secure("emulator", evidence)
+    }
+
+    fun checkEmulatorAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkEmulatorBlocking)
+
+    // ── Device binding ────────────────────────────────────────────────
+
+    fun checkDeviceBindingBlocking(context: Context): RaspCheckResult =
+        runGuarded("device_binding") {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                return@runGuarded RaspCheckResult.unavailable(
+                    "device_binding", "AndroidKeyStore hardware binding requires API 23+"
+                )
+            }
+            when (RaspKeystoreProbes.deviceBindingState()) {
+                RaspKeystoreProbes.DeviceBindingState.INTACT -> RaspCheckResult.secure("device_binding")
+                RaspKeystoreProbes.DeviceBindingState.PROVISIONED_NOW -> RaspCheckResult.unavailable(
+                    "device_binding", "Binding key was provisioned; server binding has not been verified"
+                )
+                RaspKeystoreProbes.DeviceBindingState.UNAVAILABLE -> RaspCheckResult.unavailable(
+                    "device_binding", "Keystore binding key is unavailable"
+                )
+            }
+        }
+
+    fun checkDeviceBindingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkDeviceBindingBlocking)
+
+    // ── Device fingerprint ────────────────────────────────────────────
+
+    fun checkDeviceFingerprintBlocking(context: Context): RaspCheckResult =
+        runGuarded("device_fingerprint") {
+            RaspDeviceFingerprintProbes.evaluate(RaspDeviceFingerprintProbes.readFingerprint(context))
+        }
+
+    fun checkDeviceFingerprintAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkDeviceFingerprintBlocking)
+
+    // ── Clone / Parallel Space ────────────────────────────────────────
+
+    fun checkCloneBlocking(context: Context): RaspCheckResult = runGuarded("clone") {
+        val signals = RaspCloneProbes.evidence(context)
+        val evidence = signals.map {
+            RaspEvidence("clone_${it.signal}", it.detected, it.reason)
+        }
+        val anyDetected = signals.any { it.detected }
+        val anyConclusiveClean = signals.any { it.conclusive && !it.detected }
+
+        when {
+            anyDetected -> RaspCheckResult.detected("clone", evidence)
+            anyConclusiveClean -> RaspCheckResult.secure("clone", evidence)
+            else -> RaspCheckResult(
+                "clone", RaspCheckStatus.UNKNOWN, evidence,
+                reason = "No clone signal reached a conclusive verdict"
+            )
+        }
+    }
+
+    fun checkCloneAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkCloneBlocking)
+
+    // ── Developer mode ────────────────────────────────────────────────
+
+    fun checkDeveloperModeBlocking(context: Context): RaspCheckResult =
+        runGuarded("developer_mode") {
+            val enabled = AdbGuard.isDeveloperModeEnabled(context)
+            when (enabled) {
+                null -> RaspCheckResult.unavailable(
+                    "developer_mode", "Settings.Global read failed"
+                )
+                true -> RaspCheckResult.detected("developer_mode")
+                false -> RaspCheckResult.secure("developer_mode")
+            }
+        }
+
+    fun checkDeveloperModeAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkDeveloperModeBlocking)
+
+    // ── USB debugging (ADB) ───────────────────────────────────────────
+
+    fun checkAdbEnabledBlocking(context: Context): RaspCheckResult =
+        runGuarded("adb_enabled") {
+            val enabled = AdbGuard.isAdbEnabled(context)
+            when (enabled) {
+                null -> RaspCheckResult.unavailable("adb_enabled", "Settings.Global read failed")
+                true -> RaspCheckResult.detected("adb_enabled")
+                false -> RaspCheckResult.secure("adb_enabled")
+            }
+        }
+
+    fun checkAdbEnabledAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkAdbEnabledBlocking)
+
+    // ── USB physical connection ───────────────────────────────────────
+
+    fun checkUsbConnectionBlocking(context: Context): RaspCheckResult =
+        runGuarded("usb_connection") {
+            val analysis = RaspUsbAnalysis(context)
+            val evidenceMap = analysis.usbConnectionEvidence()
+            if (evidenceMap["supported"] != true) {
+                return@runGuarded RaspCheckResult.unavailable(
+                    "usb_connection", "UsbManager unavailable on this device/build"
+                )
+            }
+            val connected = evidenceMap["connected"] == true
+            val evidence = listOf(
+                RaspEvidence("usb_device_count", evidenceMap["device_count"]),
+            )
+            if (connected) RaspCheckResult.detected("usb_connection", evidence)
+            else RaspCheckResult.secure("usb_connection", evidence)
+        }
+
+    fun checkUsbConnectionAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkUsbConnectionBlocking)
+
+    // ── Device lock (PIN/pattern/password/biometric) ─────────────────
+
+    fun checkDeviceLockMissingBlocking(context: Context): RaspCheckResult =
+        try {
+            // Screen lock plus fingerprint enrolment: an enrolled fingerprint is
+            // a safety feature (SECURE); none enrolled is a low-level finding.
+            val deviceSecure = RaspDeviceFingerprintProbes.isDeviceLockMissing(context)?.not()
+            RaspDeviceFingerprintProbes.evaluateDeviceLock(
+                deviceSecure,
+                if (deviceSecure == true) RaspDeviceFingerprintProbes.biometricState(context)
+                else RaspDeviceFingerprintProbes.BiometricState.UNKNOWN,
+            )
+        } catch (e: Exception) {
+            notifyLogger("device_lock_missing", e)
+            RaspCheckResult.unknown("device_lock_missing", "Keyguard state could not be read")
+        }
+
+    fun checkDeviceLockMissingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkDeviceLockMissingBlocking)
+
+    // ── Secure hardware (TEE/StrongBox) ───────────────────────────────
+
+    fun checkSecureHardwareUnavailableBlocking(context: Context): RaspCheckResult =
+        runGuarded("secure_hardware_unavailable") {
+            val unavailable = RaspKeystoreProbes.isSecureHardwareUnavailable(context)
+            when (unavailable) {
+                null -> RaspCheckResult.unavailable(
+                    "secure_hardware_unavailable", "Keystore query failed"
+                )
+                true -> RaspCheckResult.detected("secure_hardware_unavailable")
+                false -> RaspCheckResult.secure("secure_hardware_unavailable")
+            }
+        }
+
+    fun checkSecureHardwareUnavailableAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkSecureHardwareUnavailableBlocking)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Runtime protection (Phase 2)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── Frida / instrumentation ────────────────────────────────────────
+
+    fun checkFridaBlocking(context: Context): RaspCheckResult = runGuarded("frida") {
+        val probes = RaspDeviceProbes(context)
+        val signals = probes.fridaSignals()
+        val detected = RaspSignalAnalysis.fridaVerdict(signals)
+        val evidence = signals.map { RaspEvidence("frida_signal", it) } +
+            listOf(RaspEvidence("signal_count", signals.size))
+        if (detected) RaspCheckResult.detected("frida", evidence)
+        else RaspCheckResult.secure("frida", evidence)
+    }
+
+    fun checkFridaAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkFridaBlocking)
+
+    // ── Debugger ───────────────────────────────────────────────────────
+
+    /**
+     * `true` when the currently running build is compiled with
+     * `android:debuggable="true"` — the native equivalent of the Dart
+     * layer's `kDebugMode`, and, like it, always `false` in a proper
+     * release build. Combined with the runtime attach verdict below,
+     * matching the Dart `DebuggerDetector`'s exact OR-combination: either
+     * source firing is a threat.
+     */
+    private fun isDebuggableBuild(context: Context): Boolean = try {
+        (context.applicationInfo.flags and
+            android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    } catch (e: Exception) {
+        false
+    }
+
+    fun checkDebuggerBlocking(context: Context): RaspCheckResult = runGuarded("debugger") {
+        val probes = RaspDeviceProbes(context)
+        val runtimeSignals = probes.debuggerSignals().filter { it != RaspSignalAnalysis.DEBUGGABLE_FLAG }
+        val runtimeAttached = RaspSignalAnalysis.debuggerVerdict(runtimeSignals)
+        val debuggableBuild = isDebuggableBuild(context)
+
+        val evidence = buildList {
+            if (debuggableBuild) add(RaspEvidence("build_mode", "debug", "Running a debug build"))
+            runtimeSignals.forEach { add(RaspEvidence("debugger_signal", it, "Runtime debugger indicator")) }
+        }
+
+        if (debuggableBuild || runtimeAttached) RaspCheckResult.detected("debugger", evidence)
+        else RaspCheckResult.secure("debugger", evidence)
+    }
+
+    fun checkDebuggerAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkDebuggerBlocking)
+
+    // ── Reverse-engineering tools ──────────────────────────────────────
+
+    fun checkReverseEngineeringToolsBlocking(context: Context): RaspCheckResult =
+        runGuarded("re_tools") {
+            RaspReverseEngineeringToolsProbe.evaluate(RaspReverseEngineeringToolsProbe.observe(context))
+        }
+
+    fun checkReverseEngineeringToolsAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkReverseEngineeringToolsBlocking)
+
+    // ── Hooking / method interception ─────────────────────────────────
+
+    fun checkHookingBlocking(context: Context): RaspCheckResult = runGuarded("hook_detection") {
+        nativeBacked(context) { RaspHookAnalysis.toCheckResult(RaspHookProbes(context).observe()) }
+    }
+
+    fun checkHookingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkHookingBlocking)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — runtime protection
+    // ═══════════════════════════════════════════════════════════════════
+
+    fun scanRuntimeProtectionBlocking(context: Context): List<RaspCheckResult> = listOf(
+        checkFridaBlocking(context),
+        checkDebuggerBlocking(context),
+        checkReverseEngineeringToolsBlocking(context),
+        checkHookingBlocking(context),
+    )
+
+    // ═══════════════════════════════════════════════════════════════════
+    // App integrity (Phase 3)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── Tamper ─────────────────────────────────────────────────────────
+
+    /**
+     * Signing certificate (against [configureExpectedSigningCertificate]),
+     * installer (against [installers]), APK location, and dex / resource-table
+     * hashes (against values baked at build time, when given). Any mismatch
+     * DETECTED; nothing configured UNKNOWN "not configured"; unreadable ERROR.
+     * See [RaspTamperAnalysis]. The first dex / arsc hash reads the whole APK
+     * once (cached per APK version).
+     */
+    @JvmOverloads
+    fun checkTamperBlocking(
+        context: Context,
+        installers: Collection<String> = emptyList(),
+        classesDexSha256: String? = null,
+        resourcesArscSha256: String? = null,
+    ): RaspCheckResult = runGuarded("tamper") {
+        val expected = RaspTamperAnalysis.Expected(
+            signingCertSha256 = expectedSigningCertificateSha256,
+            installers = installers.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+            classesDexSha256 = RaspTamperAnalysis.normalizeHex(classesDexSha256),
+            resourcesArscSha256 = RaspTamperAnalysis.normalizeHex(resourcesArscSha256),
+        )
+        nativeBacked(context) { RaspTamperAnalysis.evaluate(RaspTamperAnalysis.observe(context, expected), expected) }
+    }
+
+    fun checkTamperAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback) { checkTamperBlocking(it) }
+
+    // ── Repackaging / signature ───────────────────────────────────────
+
+    /**
+     * `UNAVAILABLE` — never a silent `SECURE` — when no expected signing
+     * certificate has been configured via
+     * [configureExpectedSigningCertificate]. A pinning check that never
+     * actually compared anything must never present as a passing control.
+     * Matches the Dart side's `RepackagingDetector` exactly.
+     */
+    fun checkRepackagingBlocking(context: Context): RaspCheckResult =
+        runGuarded("repackage") {
+            val expected = expectedSigningCertificateSha256
+                ?: return@runGuarded RaspCheckResult.unavailable(
+                    "repackage",
+                    "NOT_CONFIGURED — no expected signing certificate supplied. " +
+                        "Call RaspShieldCore.configureExpectedSigningCertificate() first."
+                )
+            val mismatch = RaspSigningProbes.signatureMismatches(context, expected)
+                ?: return@runGuarded RaspCheckResult.error(
+                    "repackage", "Could not read this build's own signing certificate"
+                )
+            if (mismatch) return@runGuarded RaspCheckResult.detected("repackage")
+            // PackageManager agrees; the APK file's own signing block must too,
+            // or PackageManager is being answered by a hook (signature kill).
+            val block = RaspSigningProbes.apkSigningBlock(context)
+            val evidence = listOf(RaspEvidence("apk_signing_block", block.status.name.lowercase()))
+            when (block.status) {
+                RaspApkSigningBlock.Status.VERIFIED ->
+                    if (block.provenCertificatesSha256.none { RaspTamperAnalysis.hashesEqual(it, expected) }) {
+                        RaspCheckResult.detected("repackage", evidence + RaspEvidence("package_manager_cert_spoofed", true))
+                    } else RaspCheckResult.secure("repackage", evidence)
+                RaspApkSigningBlock.Status.INVALID -> RaspCheckResult.detected("repackage", evidence)
+                else -> RaspCheckResult.secure("repackage", evidence)
+            }
+        }
+
+    fun checkRepackagingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkRepackagingBlocking)
+
+    // ── Untrusted install source ──────────────────────────────────────
+
+    fun checkUntrustedInstallSourceBlocking(context: Context): RaspCheckResult =
+        runGuarded("untrusted_install_source") {
+            when (RaspSigningProbes.isUntrustedInstallSource(context)) {
+                null -> RaspCheckResult.unavailable(
+                    "untrusted_install_source", "PackageManager query failed"
+                )
+                true -> RaspCheckResult.detected("untrusted_install_source")
+                false -> RaspCheckResult.secure("untrusted_install_source")
+            }
+        }
+
+    fun checkUntrustedInstallSourceAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkUntrustedInstallSourceBlocking)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — app integrity
+    // ═══════════════════════════════════════════════════════════════════
+
+    fun scanAppIntegrityBlocking(context: Context): List<RaspCheckResult> = listOf(
+        checkTamperBlocking(context),
+        checkRepackagingBlocking(context),
+        checkUntrustedInstallSourceBlocking(context),
+    )
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Network security — native-only half (Phase 4)
+    // ═══════════════════════════════════════════════════════════════════
+
+    fun checkVpnBlocking(context: Context): RaspCheckResult = runGuarded("vpn") {
+        when (RaspNetworkProbes.isVpnActive(context)) {
+            true -> RaspCheckResult.detected("vpn")
+            false -> RaspCheckResult.secure("vpn")
+            null -> RaspCheckResult.unavailable("vpn", "VPN probes unavailable")
+        }
+    }
+
+    fun checkVpnAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkVpnBlocking)
+
+    /**
+     * Proxy / https proxy / user-installed CA → DETECTED on its own; no
+     * signal and no pin → SECURE with `pin_not_configured` evidence; with a
+     * pin, the SPKI check decides. Probes that could not run → UNKNOWN. See
+     * [RaspMitmAnalysis].
+     *
+     * [pinHost] + [pins] (`sha256/<Base64>` SPKI pins) come from the session
+     * config; when they are not given, the pins set with
+     * [configureCertificatePin] / [configureCertificatePins] are used. The pin
+     * check is real network I/O — call off the main thread, or use
+     * [checkMitmAsync].
+     */
+    @JvmOverloads
+    fun checkMitmBlocking(context: Context, pinHost: String? = null, pins: List<String> = emptyList()): RaspCheckResult =
+        runGuarded("mitm") {
+            val pin = if (!pinHost.isNullOrBlank() && pins.isNotEmpty()) {
+                RaspMitmAnalysis.PinConfig(pinHost.trim(), RaspCertificatePinProbes.PinSet(pins.map { it.trim() }.toSet()))
+            } else {
+                val host = pinnedHost
+                val configured = pinnedCertificatePins
+                if (host != null && configured != null && configured.isConfigured()) RaspMitmAnalysis.PinConfig(host, configured) else null
+            }
+            nativeBacked(context) {
+                RaspMitmAnalysis.evaluate(RaspNetworkProbes.mitmProbe(context), pin) {
+                    RaspCertificatePinProbes.checkCertificatePinDetailed(it.host, it.pins)
+                }
+            }
+        }
+
+    fun checkMitmAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback) { checkMitmBlocking(it) }
+
+    // ── High-risk IP / geo reputation ─────────────────────────────────
+
+    /**
+     * Asks the RASP Shield backend (`GET /v1/ip-risk`, HMAC-signed with the
+     * credential given to [RaspEventShipper.configure]); no third-party call.
+     * Real network I/O (5 s timeout, cached per network) — call off the main
+     * thread, or use [checkHighRiskIpAsync]. A failed request is UNKNOWN,
+     * never a threat. See [RaspGeoIpProbes].
+     */
+    fun checkHighRiskIpBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspGeoIpProbes.DETECTOR_ID) { RaspGeoIpProbes.checkCached(context) }
+
+    fun checkHighRiskIpAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkHighRiskIpBlocking)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — network security
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // NOTE: checkMitmBlocking (when a pin is configured) and
+    // checkHighRiskIpBlocking both perform real network I/O — this whole
+    // batch is heavier and slower than every other category's. Call it
+    // off the main thread; do not run it on every frame/tight loop.
+
+    fun scanNetworkSecurityBlocking(context: Context): List<RaspCheckResult> = listOf(
+        checkVpnBlocking(context),
+        checkMitmBlocking(context),
+        checkHighRiskIpBlocking(context),
+    )
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Privacy & screen (Phase 5)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // ── Overlay / tapjacking ───────────────────────────────────────────
+
+    /**
+     * `screenGuard` is optional — pass the [RaspScreenGuard] instance your
+     * Activity has attached (if any) to include its runtime touch-obscured
+     * signal. Permission holders are retained as audit evidence only; without
+     * an observed touch result the verdict is UNKNOWN, never DETECTED.
+     */
+    fun checkOverlayBlocking(context: Context, screenGuard: RaspScreenGuard? = null): RaspCheckResult =
+        runGuarded("overlay") {
+            val signals = RaspPrivacyScreenProbes.overlayEvidence(context, screenGuard)
+            val evidence = signals.map { RaspEvidence("overlay_${it.signal}", it.detected) }
+            when (RaspPrivacyScreenProbes.classifyOverlaySignals(signals)) {
+                RaspCheckStatus.DETECTED -> RaspCheckResult.detected("overlay", evidence)
+                RaspCheckStatus.SECURE -> RaspCheckResult.secure("overlay", evidence)
+                else -> RaspCheckResult(
+                    "overlay", RaspCheckStatus.UNKNOWN, evidence,
+                    reason = "No touch-obscured signal reached a conclusive verdict"
+                )
+            }
+        }
+
+    fun checkOverlayAsync(
+        context: Context,
+        screenGuard: RaspScreenGuard? = null,
+        callback: (RaspCheckResult) -> Unit,
+    ) = runAsync(context, callback) { checkOverlayBlocking(it, screenGuard) }
+
+    // ── Accessibility abuse ────────────────────────────────────────────
+
+    fun checkAccessibilityBlocking(context: Context): RaspCheckResult =
+        runGuarded("accessibility") {
+            when (RaspPrivacyScreenProbes.isAccessibilityAbused(context)) {
+                null -> RaspCheckResult.unavailable("accessibility", "AccessibilityManager query failed")
+                true -> RaspCheckResult.detected("accessibility")
+                false -> RaspCheckResult.secure("accessibility")
+            }
+        }
+
+    fun checkAccessibilityAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkAccessibilityBlocking)
+
+    // ── External display ──────────────────────────────────────────────
+
+    fun checkExternalDisplayBlocking(context: Context): RaspCheckResult =
+        runGuarded("external_display") {
+            val state = RaspPrivacyScreenProbes.externalDisplayState(context)
+            if (!state.supported) {
+                return@runGuarded RaspCheckResult.unavailable(
+                    "external_display", "DisplayManager unavailable on this device/build"
+                )
+            }
+            val evidence = listOf(
+                RaspEvidence("external_display_count", state.externalDisplayCount),
+                RaspEvidence("display_names", state.displayNames),
+            )
+            if (state.externalDisplayDetected) RaspCheckResult.detected("external_display", evidence)
+            else RaspCheckResult.secure("external_display", evidence)
+        }
+
+    fun checkExternalDisplayAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkExternalDisplayBlocking)
+
+    // ── Screenshot / video protection ─────────────────────────────────
+    //
+    // Deliberately NOT here: this needs a live Activity, not just a
+    // Context, so it lives on RaspScreenGuard/ScreenshotGuard directly —
+    // see RaspScreenGuard's class doc for why a one-shot Context-based
+    // call cannot express this correctly.
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — privacy & screen
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * `screenGuard` optional, same as [checkOverlayBlocking] — supply it
+     * to include the touch-obscured corroboration and, via
+     * [RaspScreenGuard.drainScreenshotEventEvidence]/
+     * [RaspScreenGuard.isScreenshotProtectionActive], call those
+     * separately since they are not part of this Context-only batch.
+     */
+    fun scanPrivacyScreenBlocking(
+        context: Context,
+        screenGuard: RaspScreenGuard? = null,
+    ): List<RaspCheckResult> = listOf(
+        checkOverlayBlocking(context, screenGuard),
+        checkAccessibilityBlocking(context),
+        checkExternalDisplayBlocking(context),
+    )
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Risky app / app intelligence (Phase 6)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** A failed package query is UNKNOWN; an unreachable PackageManager is ERROR. See [RaspRiskyAppProbes.evaluate]. */
+    fun checkRiskyAppBlocking(context: Context): RaspCheckResult = runGuarded("risky_app") {
+        RaspRiskyAppProbes.evaluate(RaspRiskyAppProbes.observe(context))
+    }
+
+    fun checkRiskyAppAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkRiskyAppBlocking)
+
+    fun checkAppIntelligenceBlocking(context: Context): RaspCheckResult =
+        runGuarded("app_intelligence") {
+            val profiles = RaspAppIntelligenceProbes.profileInstalledPackages(context)
+            val threats = profiles.filter {
+                it.classification == AppRiskClassification.KNOWN_MALICIOUS ||
+                    it.classification == AppRiskClassification.HIGH_RISK ||
+                    it.classification == AppRiskClassification.SUSPICIOUS
+            }
+            val evidence = threats.flatMap { p ->
+                p.evidence.map { reason -> RaspEvidence(reason, p.pkg) }
+            }
+            if (threats.isNotEmpty()) RaspCheckResult.detected("app_intelligence", evidence)
+            else RaspCheckResult.secure("app_intelligence", evidence)
+        }
+
+    fun checkAppIntelligenceAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkAppIntelligenceBlocking)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — risky app / app intelligence
+    // ═══════════════════════════════════════════════════════════════════
+
+    fun scanRiskyAppBlocking(context: Context): List<RaspCheckResult> = listOf(
+        checkRiskyAppBlocking(context),
+        checkAppIntelligenceBlocking(context),
+    )
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Play Integrity attestation (Phase 7)
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // Not a RaspCheckResult-shaped detector — it returns an attestation
+    // TOKEN (opaque, server-verified), not a local secure/detected verdict,
+    // so forcing it into the 5-state model would misrepresent what it is.
+    // A thin passthrough is provided here purely for API discoverability;
+    // RaspPlayIntegrityBridge itself remains the primary, directly
+    // constructible entry point — see its own class doc.
+
+    /** Heuristic-only reachability probe — see [RaspPlayIntegrityBridge.isAvailable]. */
+    fun isPlayIntegrityAvailable(context: Context): Boolean =
+        RaspPlayIntegrityBridge(context).isAvailable()
+
+    /**
+     * Requests a real Play Integrity token bound to [nonce] (the SERVER-
+     * issued challenge — never a locally-minted one). See
+     * [RaspPlayIntegrityBridge.requestToken] for the full contract.
+     */
+    fun requestPlayIntegrityToken(
+        context: Context,
+        nonce: String,
+        onResult: (Result<String>) -> Unit,
+    ) = RaspPlayIntegrityBridge(context).requestToken(nonce, onResult)
+
+    /**
+     * Play Integrity checked by the backend (`/v1/integrity/challenge` →
+     * token → `/v1/integrity/verify`); see [RaspPlayIntegrityVerifier].
+     * Blocking — call off the main thread. [cloudProjectNumber]: see
+     * [RaspPlayIntegrityBridge].
+     */
+    @JvmOverloads
+    fun verifyPlayIntegrityBlocking(
+        context: Context,
+        credential: RaspEventCredential,
+        cloudProjectNumber: Long? = null,
+    ): RaspPlayIntegrityVerifier.Outcome {
+        val bridge = RaspPlayIntegrityBridge(context, cloudProjectNumber = cloudProjectNumber)
+        return RaspPlayIntegrityVerifier(context.packageName, bridge::requestToken).verifyBlocking(credential)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Whole-catalog orchestration (Phase 9)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Every Context-only detector across every category — 25 of this
+     * SDK's 27 detectors. Not included:
+     * - Screenshot/video protection — needs a live `Activity`, not just a
+     *   `Context`; call [RaspScreenGuard.isScreenshotProtectionActive]
+     *   separately (see that class's doc for why).
+     * - Offline-compliance — requires the licensed backend pipeline this
+     *   native SDK deliberately does not include (see the Android
+     *   Native/Flutter Feature Parity plan's scope decision). There is no
+     *   native equivalent to call at all.
+     *
+     * Includes Phase 8's network detectors, so — like
+     * [scanNetworkSecurityBlocking] — this performs real network I/O and
+     * is heavier/slower than a pure on-device scan. Always call off the
+     * main thread, or use [scanAllAsync].
+     */
+    fun scanAllBlocking(context: Context): List<RaspCheckResult> =
+        scanDeviceIntegrityBlocking(context) +
+            scanRuntimeProtectionBlocking(context) +
+            scanAppIntegrityBlocking(context) +
+            scanNetworkSecurityBlocking(context) +
+            scanPrivacyScreenBlocking(context) +
+            scanRiskyAppBlocking(context)
+
+    fun scanAllAsync(context: Context, callback: (List<RaspCheckResult>) -> Unit) {
+        val appContext = context.applicationContext ?: context
+        backgroundExecutor.execute {
+            val results = scanAllBlocking(appContext)
+            mainHandler.post { callback(results) }
+        }
+    }
+
+    /**
+     * The result of [selfTest] — a QA/CI-callable diagnostic distinct from
+     * a real security scan. Run this against your **release** (R8-
+     * minified) build before shipping, not just once in debug at setup —
+     * the specific failure mode it exists to catch (a stripped/renamed
+     * class silently going dark) is invisible in an unminified debug
+     * build by construction.
+     */
+    data class RaspSelfTestReport(
+        /** Every detector's real result from one full [scanAllBlocking] pass. */
+        val results: List<RaspCheckResult>,
+        /**
+         * `false` means [RaspHookProbes]' six critical-method reflection
+         * targets did not all resolve — the one concrete, self-diagnosable
+         * symptom of a missing/misconfigured R8 keep rule (see
+         * `consumer-rules.pro`'s keep rules for exactly which methods).
+         * When `false`, `hook_native_method` can never fire on this build,
+         * silently. This is THE thing this method exists to catch.
+         */
+        val criticalReflectionIntact: Boolean,
+    ) {
+        /** Detector ids that faulted (status ERROR) — always worth investigating,
+         *  never an expected outcome on a healthy build. */
+        val erroredDetectorIds: List<String>
+            get() = results.filter { it.status == RaspCheckStatus.ERROR }.map { it.detectorId }
+
+        /** Detector ids reporting UNAVAILABLE — inspect each one's `reason`:
+         *  some are expected (repackaging with no fingerprint configured,
+         *  screenshot-event detection below API 34), others may indicate a
+         *  packaging problem worth investigating on THIS specific build. */
+        val unavailableDetectorIds: List<String>
+            get() = results.filter { it.status == RaspCheckStatus.UNAVAILABLE }.map { it.detectorId }
+    }
+
+    /**
+     * Exercises every detector once via [scanAllBlocking] and additionally
+     * verifies [RaspHookProbes]' reflection-based integrity checks
+     * actually resolve on this build — the native SDK's equivalent of the
+     * lean SDK's `verifyIntegration()`, extended to the full catalog. Call
+     * this from your release-build CI pipeline before every production
+     * release, not just once at integration time.
+     *
+     * Blocking — call off the main thread, same as [scanAllBlocking].
+     */
+    fun selfTest(context: Context): RaspSelfTestReport {
+        val results = scanAllBlocking(context)
+        val hookProbes = RaspHookProbes(context)
+        val reflectionIntact = hookProbes.criticalMethodIntegrity().values.none {
+            it == RaspHookProbes.MethodIntegrity.UNAVAILABLE
+        }
+        return RaspSelfTestReport(results, reflectionIntact)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Category batch — device integrity
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Runs every device-integrity detector (Phase 1) and returns all 10
+     * results. Each detector already isolates its own exceptions via
+     * [runGuarded] — one failing detector can never prevent the others
+     * from running or being reported. This method itself adds no further
+     * exception risk since it just sequences already-guarded calls.
+     *
+     * Blocking — call off the main thread. See [scanAllBlocking] for the
+     * whole-catalog version.
+     */
+    fun scanDeviceIntegrityBlocking(context: Context): List<RaspCheckResult> = listOf(
+        checkRootBlocking(context),
+        checkEmulatorBlocking(context),
+        checkDeviceBindingBlocking(context),
+        checkDeviceFingerprintBlocking(context),
+        checkCloneBlocking(context),
+        checkDeveloperModeBlocking(context),
+        checkAdbEnabledBlocking(context),
+        checkUsbConnectionBlocking(context),
+        checkDeviceLockMissingBlocking(context),
+        checkSecureHardwareUnavailableBlocking(context),
+    )
+
+    // ── Location integrity: mock location (Task 3a) ───────────────────
+
+    /** [location] is what the host supplied; `null` → UNAVAILABLE. See [RaspMockLocationProbes]. */
+    fun checkMockLocationBlocking(context: Context, location: RaspLocationSnapshot?): RaspCheckResult =
+        runGuarded(RaspMockLocationProbes.DETECTOR_ID) {
+            RaspMockLocationProbes.evaluate(RaspMockLocationProbes.observe(context, location))
+        }
+
+    // ── Time spoofing (Task 3a) ────────────────────────────────────────
+
+    /** Uses [monitor]'s previous reading; the default is one per process. See [RaspTimeSpoofingProbes]. */
+    @JvmOverloads
+    fun checkTimeSpoofingBlocking(
+        context: Context,
+        monitor: RaspTimeSpoofingProbes.Monitor = RaspTimeSpoofingProbes.processMonitor,
+    ): RaspCheckResult = runGuarded(RaspTimeSpoofingProbes.DETECTOR_ID) {
+        RaspTimeSpoofingProbes.evaluate(
+            monitor.observe(RaspTimeSpoofingProbes.ClockReading.now(), RaspTimeSpoofingProbes.readAutoTimeEnabled(context)),
+        )
+    }
+
+    /** Supplies a trusted server time to the process-wide time monitor. */
+    fun setServerTime(serverTimeMillis: Long) = RaspTimeSpoofingProbes.processMonitor.setServerTime(serverTimeMillis)
+
+    fun checkTimeSpoofingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback) { checkTimeSpoofingBlocking(it) }
+
+    // ── Unsafe Wi-Fi (Task 3a) ─────────────────────────────────────────
+
+    fun checkUnsafeWifiBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspUnsafeWifiProbes.DETECTOR_ID) {
+            RaspUnsafeWifiProbes.evaluate(RaspUnsafeWifiProbes.observe(context))
+        }
+
+    fun checkUnsafeWifiAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkUnsafeWifiBlocking)
+
+    // ── Screen recording (Task 3a) ─────────────────────────────────────
+
+    fun checkScreenRecordingBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspScreenRecordingProbes.DETECTOR_ID) {
+            RaspScreenRecordingProbes.evaluate(RaspScreenRecordingProbes.observe(context))
+        }
+
+    fun checkScreenRecordingAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkScreenRecordingBlocking)
+
+    // ── Vishing: call during app use (Task 3b) ─────────────────────────
+
+    fun checkVishingCallBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspVishingCallProbes.DETECTOR_ID) {
+            RaspVishingCallProbes.evaluate(RaspVishingCallProbes.observe(context))
+        }
+
+    fun checkVishingCallAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkVishingCallBlocking)
+
+    /**
+     * For payment/transfer screens: `true` while a phone call is ringing or in
+     * progress, `false` when there is none, `null` when it cannot be told
+     * (no READ_PHONE_STATE). Cheap; safe to call on the main thread.
+     */
+    fun isCallActive(context: Context): Boolean? = try {
+        RaspVishingCallProbes.isCallActive(context)
+    } catch (e: Exception) {
+        notifyLogger(RaspVishingCallProbes.DETECTOR_ID, e)
+        null
+    }
+
+    // ── SIM change (Task 3b) ───────────────────────────────────────────
+
+    fun checkSimChangeBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspSimChangeProbes.DETECTOR_ID) {
+            RaspSimChangeProbes.evaluate(
+                RaspSimChangeProbes.observe(context),
+                RaspSimChangeProbes.EncryptedStore(context),
+                System.currentTimeMillis(),
+            )
+        }
+
+    fun checkSimChangeAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkSimChangeBlocking)
+
+    /**
+     * Accepts the current SIMs after a detected change (e.g. once the customer
+     * is re-verified); `sim_change` returns to SECURE. Blocking (storage I/O).
+     */
+    fun acknowledgeSimChange(context: Context): Boolean =
+        RaspSimChangeProbes.acknowledgeChange(RaspSimChangeProbes.EncryptedStore(context))
+
+    /**
+     * Testing only: forgets the SIM baseline, so the next `sim_change` run
+     * stores a new one and reports UNKNOWN "baseline stored". Works only in a
+     * debuggable build; a release build returns `false` and keeps the
+     * baseline. Blocking (storage I/O).
+     */
+    fun resetSimBaseline(context: Context): Boolean =
+        RaspSimChangeProbes.resetBaseline(RaspSimChangeProbes.EncryptedStore(context), isDebuggableBuild(context))
+
+    // ── Third-party keyboard (Task 3b) ─────────────────────────────────
+
+    @JvmOverloads
+    fun checkThirdPartyKeyboardBlocking(context: Context, trustedPackages: List<String> = emptyList()): RaspCheckResult =
+        runGuarded(RaspThirdPartyKeyboardProbes.DETECTOR_ID) {
+            RaspThirdPartyKeyboardProbes.evaluate(RaspThirdPartyKeyboardProbes.observe(context), trustedPackages)
+        }
+
+    fun checkThirdPartyKeyboardAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback) { checkThirdPartyKeyboardBlocking(it) }
+
+    // ── Task hijacking (Task 3b) ───────────────────────────────────────
+
+    fun checkTaskHijackBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspTaskHijackProbes.DETECTOR_ID) {
+            RaspTaskHijackProbes.evaluate(RaspTaskHijackProbes.observe(context))
+        }
+
+    fun checkTaskHijackAsync(context: Context, callback: (RaspCheckResult) -> Unit) =
+        runAsync(context, callback, ::checkTaskHijackBlocking)
+
+    // ── Device state attestation (Task 3c) ─────────────────────────────
+
+    /** Creates the device key on first use (may take ~100-500 ms). See [RaspDeviceStateAttestationProbes]. */
+    @JvmOverloads
+    fun checkDeviceStateAttestationBlocking(context: Context, maxSecurityPatchAgeDays: Int? = null): RaspCheckResult =
+        runGuarded(RaspDeviceStateAttestationProbes.DETECTOR_ID) {
+            RaspDeviceStateAttestationProbes.evaluate(
+                RaspDeviceStateAttestationProbes.observe(context),
+                maxSecurityPatchAgeDays,
+                System.currentTimeMillis() / 86_400_000L,
+            )
+        }
+
+    // ── Malware reputation (Task 3c) ───────────────────────────────────
+
+    /** [listJson]: signed list; [publicKeyBase64]: its Ed25519 key. See [RaspMalwareReputationProbes]. */
+    fun checkMalwareReputationBlocking(context: Context, listJson: String?, publicKeyBase64: String?): RaspCheckResult =
+        runGuarded(RaspMalwareReputationProbes.DETECTOR_ID) {
+            RaspMalwareReputationProbes.evaluate(RaspMalwareReputationProbes.observe(context, listJson, publicKeyBase64))
+        }
+
+    // ── Fraud signals (Task 8.1) ───────────────────────────────────────
+
+    /** Remote-control / screen-sharing apps and active cast or recording. See [RaspRemoteControlProbes]. */
+    @JvmOverloads
+    fun checkRemoteControlAppBlocking(context: Context, listJson: String? = null, publicKeyBase64: String? = null): RaspCheckResult =
+        runGuarded(RaspRemoteControlProbes.DETECTOR_ID) {
+            RaspRemoteControlProbes.evaluate(RaspRemoteControlProbes.observe(context, listJson, publicKeyBase64))
+        }
+
+    /** Screen capture or cast while the app is in the foreground. See [RaspScreenSharingProbes]. */
+    fun checkScreenSharingRiskBlocking(context: Context): RaspCheckResult =
+        runGuarded(RaspScreenSharingProbes.DETECTOR_ID) {
+            RaspScreenSharingProbes.evaluate(RaspScreenSharingProbes.observe(context))
+        }
+
+    /** Accessibility abuse, unknown notification listener, overlay, remote-control app. See [RaspOtpInterceptionProbes]. */
+    @JvmOverloads
+    fun checkOtpInterceptionRiskBlocking(
+        context: Context,
+        screenGuard: RaspScreenGuard? = null,
+        listenerAllowlist: List<String> = emptyList(),
+        remoteListJson: String? = null,
+        remoteListKey: String? = null,
+    ): RaspCheckResult = runGuarded(RaspOtpInterceptionProbes.DETECTOR_ID) {
+        RaspOtpInterceptionProbes.evaluate(
+            RaspOtpInterceptionProbes.observe(context, screenGuard, listenerAllowlist, remoteListJson, remoteListKey),
+        )
+    }
+
+    /** Apps with SMS permissions or notification-listener access; never reads messages. See [RaspSmsReaderProbes]. */
+    @JvmOverloads
+    fun checkSmsReaderAbuseBlocking(context: Context, allowlist: List<String> = emptyList()): RaspCheckResult =
+        runGuarded(RaspSmsReaderProbes.DETECTOR_ID) {
+            RaspSmsReaderProbes.evaluate(RaspSmsReaderProbes.observe(context, allowlist))
+        }
+
+    /** Risk hint only. See [RaspOtpForwardingProbes]. */
+    @JvmOverloads
+    fun checkOtpForwardingRiskBlocking(
+        context: Context,
+        extraAutoForwardPackages: List<String> = emptyList(),
+        remoteListJson: String? = null,
+        remoteListKey: String? = null,
+    ): RaspCheckResult = runGuarded(RaspOtpForwardingProbes.DETECTOR_ID) {
+        RaspOtpForwardingProbes.evaluate(
+            RaspOtpForwardingProbes.observe(context, extraAutoForwardPackages, remoteListJson, remoteListKey),
+        )
+    }
+}
